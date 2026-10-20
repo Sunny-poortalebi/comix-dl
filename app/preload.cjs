@@ -8,4 +8,8 @@ contextBridge.exposeInMainWorld("api", {
   onProgress: (cb) => ipcRenderer.on("progress", (_e, ev) => cb(ev)),
   onAutostart: (cb) => ipcRenderer.on("autostart", (_e, cfg) => cb(cfg)),
   reportError: (payload) => ipcRenderer.send("renderer-error", payload),
+  libraryList: () => ipcRenderer.invoke("library:list"),
+  libraryUpdate: (key, patch) => ipcRenderer.invoke("library:update", key, patch),
+  libraryImport: (dir) => ipcRenderer.invoke("library:import", dir),
+  onLibraryChanged: (cb) => ipcRenderer.on("libraryChanged", () => cb()),
 });

@@ -34,6 +34,73 @@ if (SENTRY_DSN) {
 let win = null;
 let child = null;
 let lastExitCode = null;
+let currentRun = null;
+
+// --- library: persistent history of downloaded titles ----------------------
+const LIB_PATH = path.join(os.homedir(), ".comix-dl", "library.json");
+
+function loadLibrary() {
+  try {
+    const lib = JSON.parse(fs.readFileSync(LIB_PATH, "utf8"));
+    if (lib && typeof lib.titles === "object") return { version: 1, outDirs: [], ...lib };
+  } catch {}
+  return { version: 1, outDirs: [], titles: {} };
+}
+
+function saveLibrary(lib) {
+  fs.mkdirSync(path.dirname(LIB_PATH), { recursive: true });
+  const tmp = `${LIB_PATH}.tmp`;
+  fs.writeFileSync(tmp, JSON.stringify(lib, null, 2));
+  fs.renameSync(tmp, LIB_PATH);
+}
+
+const libKey = (name) =>
+  String(name || "")
+    .toLowerCase()
+    .trim()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+
+/** import series folders that already exist on disk (index.json/state.json) */
+function mergeLibraryFrom(dir) {
+  const lib = loadLibrary();
+  if (!lib.outDirs.includes(dir)) lib.outDirs.push(dir);
+  let entries = [];
+  try {
+    entries = fs.readdirSync(dir, { withFileTypes: true });
+  } catch {}
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const seriesDir = path.join(dir, e.name);
+    let idx;
+    try {
+      idx = JSON.parse(fs.readFileSync(path.join(seriesDir, "index.json"), "utf8"));
+    } catch {
+      continue;
+    }
+    const chapters = idx.chapters || [];
+    const key = libKey(idx.series || e.name);
+    const cur = lib.titles[key] || { addedAt: Date.now(), read: false, score: null };
+    lib.titles[key] = {
+      ...cur,
+      series: idx.series || e.name,
+      outDir: seriesDir,
+      chaptersTotal: chapters.length,
+      chaptersDone: chapters.filter((c) => c.status === "done").length,
+      lastRunAt: idx.updatedAt || cur.lastRunAt || Date.now(),
+    };
+  }
+  saveLibrary(lib);
+  return lib;
+}
+
+function scanAllOutDirs() {
+  let lib = loadLibrary();
+  const dirs = [...new Set([...lib.outDirs, path.join(app.getPath("downloads"), "comix-dl")])];
+  for (const d of dirs) lib = mergeLibraryFrom(d);
+  return lib;
+}
+
 
 function createWindow() {
   win = new BrowserWindow({
@@ -92,6 +159,7 @@ ipcMain.handle("start", async (_e, cfg) => {
     env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
   });
   lastExitCode = null;
+  currentRun = { url: cfg.url, out, seen: new Set() };
 
   const forward = (stream, isErr) => {
     let buf = "";
@@ -102,7 +170,24 @@ ipcMain.handle("start", async (_e, cfg) => {
       for (const line of lines) {
         if (line.startsWith("@@P ")) {
           try {
-            send(JSON.parse(line.slice(4)));
+            const ev = JSON.parse(line.slice(4));
+            if (currentRun && ev.type === "series") {
+              const lib = loadLibrary();
+              const key = libKey(ev.series);
+              const cur = lib.titles[key] || { addedAt: Date.now(), read: false, score: null };
+              lib.titles[key] = {
+                ...cur,
+                series: ev.series,
+                url: currentRun.url,
+                outDir: ev.out,
+                lastRunAt: Date.now(),
+                planned: ev.picked,
+              };
+              if (!lib.outDirs.includes(currentRun.out)) lib.outDirs.push(currentRun.out);
+              saveLibrary(lib);
+              send({ type: "libraryChanged" });
+            }
+            send(ev);
           } catch {}
         } else if (line.trim()) {
           send({ type: "log", line, err: isErr });
@@ -121,6 +206,13 @@ ipcMain.handle("start", async (_e, cfg) => {
   child.on("exit", (code) => {
     lastExitCode = code;
     child = null;
+    if (currentRun) {
+      try {
+        mergeLibraryFrom(currentRun.out);
+      } catch {}
+      send({ type: "libraryChanged" });
+      currentRun = null;
+    }
     send({ type: "exit", code });
     if (SMOKE) {
       console.log(`SMOKE_RESULT code=${code}`);
@@ -153,6 +245,26 @@ ipcMain.on("renderer-error", (_e, payload) => {
   const err = new Error(payload?.message || "renderer error");
   if (payload?.stack) err.stack = payload.stack;
   Sentry.captureException(err, { tags: { stage: "renderer" } });
+});
+
+ipcMain.handle("library:list", () => scanAllOutDirs());
+
+ipcMain.handle("library:import", (_e, dir) => {
+  if (!dir) return loadLibrary();
+  return mergeLibraryFrom(dir);
+});
+
+ipcMain.handle("library:update", (_e, key, patch) => {
+  const lib = loadLibrary();
+  if (lib.titles[key]) {
+    const clean = {};
+    if (typeof patch?.read === "boolean") clean.read = patch.read;
+    if (patch?.score === null) clean.score = null;
+    else if (typeof patch?.score === "number" && patch.score >= 1 && patch.score <= 5) clean.score = patch.score;
+    lib.titles[key] = { ...lib.titles[key], ...clean };
+    saveLibrary(lib);
+  }
+  return lib;
 });
 
 app.whenReady().then(() => {

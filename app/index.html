@@ -12,8 +12,16 @@
       <h1>comix-dl</h1>
       <p class="sub">manga → webp → epub · resumable</p>
     </div>
-    <div class="status" id="status">idle</div>
+    <div class="topright">
+      <nav class="tabs">
+        <button class="tab active" id="tabDownload">Download</button>
+        <button class="tab" id="tabLibrary">Library</button>
+      </nav>
+      <div class="status" id="status">idle</div>
+    </div>
   </header>
+
+  <div id="viewDownload" class="view">
 
   <section class="panel config">
     <div class="field wide">
@@ -74,6 +82,27 @@
     <div class="loghead"><span>Log</span><button class="ghost small" id="clearLog">clear</button></div>
     <pre id="log"></pre>
   </section>
+  </div>
+
+  <div id="viewLibrary" class="view" hidden>
+    <div class="panel libbar">
+      <div class="filters">
+        <button class="chip active" data-filter="all">All</button>
+        <button class="chip" data-filter="toread">To read</button>
+        <button class="chip" data-filter="read">Read</button>
+      </div>
+      <span class="muted" id="libCount"></span>
+      <button class="ghost small" id="libImport">add folder</button>
+      <button class="ghost small" id="libRefresh">refresh</button>
+    </div>
+    <div class="panel library">
+      <div class="lib-head">
+        <span>Read</span><span>Title</span><span>Score</span><span>Chapters</span><span>Last run</span><span></span>
+      </div>
+      <div class="lib-body" id="libBody"></div>
+      <div class="lib-empty" id="libEmpty" hidden>No downloads yet — start one on the Download tab.</div>
+    </div>
+  </div>
 
   <script src="renderer.js"></script>
 </body>

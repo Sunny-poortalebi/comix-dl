@@ -17,6 +17,10 @@ const els = {
   overallFill: $("overallFill"), current: $("current"), pageFill: $("pageFill"),
   epubRow: $("epubRow"), epubFill: $("epubFill"), epubText: $("epubText"),
   chapters: $("chapters"), log: $("log"),
+  tabDownload: $("tabDownload"), tabLibrary: $("tabLibrary"),
+  viewDownload: $("viewDownload"), viewLibrary: $("viewLibrary"),
+  libBody: $("libBody"), libEmpty: $("libEmpty"), libCount: $("libCount"), libRefresh: $("libRefresh"),
+  libImport: $("libImport"),
 };
 
 const st = {
@@ -157,6 +161,101 @@ function onEvent(ev) {
   }
 }
 
+// --- library view -----------------------------------------------------------
+const lib = { data: null, filter: "all" };
+
+function showView(name) {
+  const download = name === "download";
+  els.viewDownload.hidden = !download;
+  els.viewLibrary.hidden = download;
+  els.tabDownload.classList.toggle("active", download);
+  els.tabLibrary.classList.toggle("active", !download);
+  if (!download) loadLibrary();
+}
+
+function fmtDate(ts) {
+  try {
+    return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+  } catch {
+    return "";
+  }
+}
+
+function libraryRow(t) {
+  const row = document.createElement("div");
+  row.className = "librow";
+
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = !!t.read;
+  cb.title = t.read ? "mark as to read" : "mark as read";
+  cb.addEventListener("change", () => updateTitle(t.key, { read: cb.checked }));
+
+  const title = document.createElement("span");
+  title.className = "title";
+  title.textContent = t.series || t.key;
+  if (t.url) {
+    const small = document.createElement("small");
+    small.textContent = t.url.replace(/^https?:\/\//, "");
+    title.appendChild(small);
+  }
+
+  const stars = document.createElement("span");
+  stars.className = "stars";
+  for (let i = 1; i <= 5; i++) {
+    const b = document.createElement("button");
+    b.textContent = "★";
+    b.title = `${i}/5${t.score === i ? " (click again to clear)" : ""}`;
+    if ((t.score || 0) >= i) b.classList.add("on");
+    b.addEventListener("click", () => updateTitle(t.key, { score: t.score === i ? null : i }));
+    stars.appendChild(b);
+  }
+
+  const chapters = document.createElement("span");
+  chapters.className = "meta";
+  chapters.textContent = `${t.chaptersDone ?? 0}/${t.chaptersTotal ?? 0}`;
+
+  const date = document.createElement("span");
+  date.className = "meta";
+  date.textContent = fmtDate(t.lastRunAt);
+
+  const open = document.createElement("button");
+  open.className = "ghost small";
+  open.textContent = "open";
+  open.addEventListener("click", () => window.api.openPath(t.outDir));
+
+  row.append(cb, title, stars, chapters, date, open);
+  return row;
+}
+
+function renderLibrary() {
+  const data = lib.data;
+  if (!data) return;
+  const all = Object.entries(data.titles || {}).map(([key, t]) => ({ key, ...t }));
+  const entries = all
+    .filter((t) => (lib.filter === "all" ? true : lib.filter === "read" ? !!t.read : !t.read))
+    .sort((a, b) => (b.lastRunAt || 0) - (a.lastRunAt || 0));
+  const readCount = all.filter((t) => t.read).length;
+  els.libCount.textContent = `${all.length} titles · ${readCount} read · ${all.length - readCount} to read`;
+  els.libEmpty.hidden = entries.length > 0;
+  els.libBody.innerHTML = "";
+  for (const t of entries) els.libBody.appendChild(libraryRow(t));
+}
+
+async function loadLibrary() {
+  try {
+    lib.data = await window.api.libraryList();
+  } catch {}
+  renderLibrary();
+}
+
+async function updateTitle(key, patch) {
+  try {
+    lib.data = await window.api.libraryUpdate(key, patch);
+  } catch {}
+  renderLibrary();
+}
+
 async function start() {
   if (st.running) return;
   const cfg = {
@@ -190,6 +289,24 @@ async function start() {
 
 els.start.addEventListener("click", start);
 els.stop.addEventListener("click", () => window.api.stop());
+els.tabDownload.addEventListener("click", () => showView("download"));
+els.tabLibrary.addEventListener("click", () => showView("library"));
+document.querySelectorAll(".chip").forEach((c) =>
+  c.addEventListener("click", () => {
+    lib.filter = c.dataset.filter;
+    document.querySelectorAll(".chip").forEach((x) => x.classList.toggle("active", x === c));
+    renderLibrary();
+  }),
+);
+els.libRefresh.addEventListener("click", loadLibrary);
+els.libImport.addEventListener("click", async () => {
+  const dir = await window.api.chooseOut();
+  if (!dir) return;
+  try {
+    lib.data = await window.api.libraryImport(dir);
+  } catch {}
+  renderLibrary();
+});
 els.pickOut.addEventListener("click", async () => {
   const dir = await window.api.chooseOut();
   if (dir) els.out.value = dir;
@@ -199,6 +316,7 @@ els.openEpub.addEventListener("click", () => window.api.openPath(st.epubPath));
 els.clearLog.addEventListener("click", () => (els.log.innerHTML = ""));
 
 window.api.onProgress(onEvent);
+window.api.onLibraryChanged(() => loadLibrary());
 window.api.onAutostart((cfg) => {
   els.url.value = cfg.url || "";
   els.group.value = cfg.group || "Violet Scans";
@@ -211,3 +329,4 @@ window.api.onAutostart((cfg) => {
 
 els.out.value = "";
 log("ready — paste a comix.to title URL and press Start");
+loadLibrary();
