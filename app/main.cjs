@@ -257,6 +257,86 @@ ipcMain.handle("library:import", (_e, dir) => {
   return mergeLibraryFrom(dir);
 });
 
+ipcMain.handle("library:track", (_e, url) => {
+  if (!/^https?:\/\/(www\.)?comix\.to\/title\//.test(url || "")) return { error: "paste a comix.to title URL" };
+  const lib = loadLibrary();
+  const slug = (String(url).match(/\/title\/([^/?#]+)/) || [])[1] || String(url);
+  const nameHint = slug
+    .replace(/^[a-z0-9]{3,8}-/i, "")
+    .replace(/-/g, " ")
+    .replace(/\b\w/g, (c) => c.toUpperCase());
+  const key = libKey(nameHint);
+  const cur = lib.titles[key] || { addedAt: Date.now(), read: false, score: null };
+  lib.titles[key] = { ...cur, series: cur.series || nameHint, url, watching: true };
+  saveLibrary(lib);
+  return lib;
+});
+
+function runChildCapture(args) {
+  return new Promise((resolve) => {
+    const p = spawn(process.execPath, args, { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } });
+    const events = [];
+    const handle = (stream, isErr) => {
+      let buf = "";
+      stream.on("data", (d) => {
+        buf += d.toString();
+        const lines = buf.split("\n");
+        buf = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith("@@P ")) {
+            try {
+              events.push(JSON.parse(line.slice(4)));
+            } catch {}
+          } else if (line.trim()) {
+            send({ type: "log", line, err: isErr });
+          }
+        }
+      });
+    };
+    handle(p.stdout, false);
+    handle(p.stderr, true);
+    p.on("error", (err) => {
+      send({ type: "log", line: `status check failed: ${err.message}`, err: true });
+      resolve(events);
+    });
+    p.on("exit", () => resolve(events));
+  });
+}
+
+let statusCheckRunning = false;
+ipcMain.handle("library:check", async () => {
+  if (child) return { error: "a download is running — try again when it finishes" };
+  if (statusCheckRunning) return { error: "status check already running" };
+  const lib = loadLibrary();
+  const watched = Object.entries(lib.titles).filter(([, t]) => t.watching && t.url);
+  if (!watched.length) return lib;
+
+  statusCheckRunning = true;
+  try {
+    const args = [path.join(ROOT, "comix-dl.mjs"), "--progress"];
+    for (const [, t] of watched) args.push("--status-check", t.url);
+    const events = await runChildCapture(args);
+    const fresh = loadLibrary();
+    for (const ev of events) {
+      if (ev.type !== "status" || !ev.url) continue;
+      const found = Object.entries(fresh.titles).find(([, t]) => t.url === ev.url);
+      if (!found) continue;
+      const [key, t] = found;
+      fresh.titles[key] = {
+        ...t,
+        ...(ev.series ? { series: ev.series } : {}),
+        status: ev.status || t.status || null,
+        checkedAt: Date.now(),
+      };
+    }
+    saveLibrary(fresh);
+    send({ type: "libraryChanged" });
+    return fresh;
+  } finally {
+    statusCheckRunning = false;
+  }
+});
+
 ipcMain.handle("library:update", (_e, key, patch) => {
   const lib = loadLibrary();
   if (lib.titles[key]) {

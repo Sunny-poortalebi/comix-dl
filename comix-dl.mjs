@@ -91,10 +91,11 @@ function parseArgs(argv) {
     else if (a === "--limit") opts.limit = Number(argv[++i]);
     else if (a === "--progress") PROGRESS = true;
     else if (a === "--self-test") opts.selfTest = true;
+    else if (a === "--status-check") (opts.statusChecks ||= []).push(argv[++i]);
     else if (a.startsWith("--")) fail(`unknown option: ${a}`);
     else urls.push(a);
   }
-  if (!opts.series && !opts.selfTest && urls.length === 0)
+  if (!opts.series && !opts.selfTest && !opts.statusChecks?.length && urls.length === 0)
     fail("usage: node comix-dl.mjs <chapter-url> [...] | --series <title-url> [--group NAME] [--out DIR] [--no-epub] [--max-mb N]");
   return { urls, opts };
 }
@@ -966,6 +967,30 @@ async function downloadSeries(titleUrl, opts) {
   return ok;
 }
 
+/** Read a title's release status without downloading anything. */
+async function checkStatus(url) {
+  const { browser, page, stopHeartbeat } = await openChapter(url);
+  try {
+    const series = (await page.title()).split("·")[0].replace(/\s*[-–|].*$/, "").trim();
+    const status = await page.evaluate(() => {
+      const el = document.querySelector(".mpage__badge--status");
+      return el ? el.textContent.trim().toUpperCase() : null;
+    });
+    console.log(`  ${series} — ${status || "unknown"}`);
+    emit({ type: "status", url, series, status });
+    return true;
+  } catch (err) {
+    capture(err, { stage: "status" });
+    console.error(`  status check failed: ${err.message}`);
+    emit({ type: "status", url, series: null, status: null, error: err.message });
+    return false;
+  } finally {
+    stopHeartbeat();
+    await page.close().catch(() => {});
+    browser.disconnect();
+  }
+}
+
 function runSelfTest() {
   const assert = (cond, msg) => {
     if (!cond) {
@@ -999,6 +1024,12 @@ try {
   if (opts.selfTest) {
     runSelfTest();
     process.exit(0);
+  }
+  if (opts.statusChecks?.length) {
+    let allOk = true;
+    for (const u of opts.statusChecks) allOk = (await checkStatus(u)) && allOk;
+    if (SENTRY_ON) await Sentry.flush(3000);
+    process.exit(allOk ? 0 : 1);
   }
   let ok = true;
   if (opts.series) {

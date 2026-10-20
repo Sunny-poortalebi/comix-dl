@@ -21,6 +21,7 @@ const els = {
   viewDownload: $("viewDownload"), viewLibrary: $("viewLibrary"),
   libBody: $("libBody"), libEmpty: $("libEmpty"), libCount: $("libCount"), libRefresh: $("libRefresh"),
   libImport: $("libImport"),
+  trackUrl: $("trackUrl"), trackBtn: $("trackBtn"), checkStatuses: $("checkStatuses"),
 };
 
 const st = {
@@ -199,6 +200,12 @@ function libraryRow(t) {
     small.textContent = t.url.replace(/^https?:\/\//, "");
     title.appendChild(small);
   }
+  if (t.status || t.watching) {
+    const badge = document.createElement("small");
+    badge.className = `badge ${t.status === "FINISHED" ? "done" : t.status ? "ongoing" : ""}`;
+    badge.textContent = t.status || "unchecked";
+    title.appendChild(badge);
+  }
 
   const stars = document.createElement("span");
   stars.className = "stars";
@@ -239,10 +246,20 @@ function renderLibrary() {
   if (!data) return;
   const all = Object.entries(data.titles || {}).map(([key, t]) => ({ key, ...t }));
   const entries = all
-    .filter((t) => (lib.filter === "all" ? true : lib.filter === "read" ? !!t.read : !t.read))
+    .filter((t) =>
+      lib.filter === "all"
+        ? true
+        : lib.filter === "read"
+          ? !!t.read
+          : lib.filter === "watching"
+            ? !!t.watching
+            : !t.read && !t.watching,
+    )
     .sort((a, b) => (b.lastRunAt || 0) - (a.lastRunAt || 0));
   const readCount = all.filter((t) => t.read).length;
-  els.libCount.textContent = `${all.length} titles · ${readCount} read · ${all.length - readCount} to read`;
+  const watchCount = all.filter((t) => t.watching).length;
+  const toReadCount = all.filter((t) => !t.read && !t.watching).length;
+  els.libCount.textContent = `${all.length} titles · ${readCount} read · ${toReadCount} to read · ${watchCount} incomplete`;
   els.libEmpty.hidden = entries.length > 0;
   els.libBody.innerHTML = "";
   for (const t of entries) els.libBody.appendChild(libraryRow(t));
@@ -312,6 +329,23 @@ els.libImport.addEventListener("click", async () => {
     lib.data = await window.api.libraryImport(dir);
   } catch {}
   renderLibrary();
+});
+els.trackBtn.addEventListener("click", async () => {
+  const res = await window.api.libraryTrack(els.trackUrl.value.trim());
+  if (res?.error) return log(res.error, true);
+  lib.data = res;
+  els.trackUrl.value = "";
+  renderLibrary();
+  log("tracked — press “check status” to fetch its release status");
+});
+els.checkStatuses.addEventListener("click", async () => {
+  els.checkStatuses.disabled = true;
+  const res = await window.api.libraryCheck();
+  els.checkStatuses.disabled = false;
+  if (res?.error) return log(res.error, true);
+  lib.data = res;
+  renderLibrary();
+  log("status check complete");
 });
 els.pickOut.addEventListener("click", async () => {
   const dir = await window.api.chooseOut();

@@ -31,13 +31,21 @@ body {
 .tab { border: 0; background: transparent; padding: 6px 14px; border-radius: 7px; color: var(--muted); }
 .tab.active { background: var(--panel); color: var(--fg); box-shadow: 0 1px 0 rgba(255,255,255,0.04); }
 .view { display: flex; flex-direction: column; gap: 10px; flex: 1; min-height: 0; }
+.view[hidden] { display: none !important; }
 
 .chip { padding: 5px 11px; border-radius: 999px; font-size: 12px; color: var(--muted); }
 .chip.active { color: var(--fg); border-color: var(--accent); }
-.libbar { display: flex; align-items: center; gap: 12px; }
+.libbar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .filters { display: flex; gap: 6px; }
 .muted { color: var(--muted); font-size: 12px; }
-.libbar #libRefresh { margin-left: auto; }
+.trackbox { display: flex; gap: 6px; align-items: center; margin-left: auto; }
+.trackbox input { width: 280px; padding: 6px 9px; }
+.badge {
+  display: inline-block; margin-top: 2px; padding: 1px 6px; border-radius: 999px;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.3px; border: 1px solid var(--border); color: var(--muted);
+}
+.badge.ongoing { color: #ffcc4d; border-color: #7a6220; }
+.badge.done { color: var(--success); border-color: #1f6b4d; }
 
 .library { flex: 1; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 .lib-head, .librow {
