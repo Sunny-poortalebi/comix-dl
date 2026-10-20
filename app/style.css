@@ -75,6 +75,23 @@ button.del:hover { border-color: var(--error); }
 .lib-head { color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); }
 .lib-body { overflow-y: auto; }
 .librow { border-bottom: 1px solid rgba(42, 47, 66, 0.5); }
+.library.covers .lib-head { display: none; }
+.libgrid {
+  display: grid !important; grid-template-columns: repeat(auto-fill, minmax(148px, 1fr));
+  gap: 14px; padding: 12px; align-content: start;
+}
+.libcard { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.coverwrap { position: relative; }
+.cover { width: 100%; aspect-ratio: 2 / 3; object-fit: cover; border-radius: 8px; background: var(--panel-2); display: block; }
+.cover.placeholder { display: flex; align-items: center; justify-content: center; font-size: 36px; color: var(--muted); }
+.readcheck {
+  position: absolute; left: 6px; top: 6px; display: flex; gap: 4px; align-items: center;
+  background: rgba(10, 12, 18, 0.78); border-radius: 6px; padding: 2px 6px; font-size: 11px;
+}
+.readcheck input { width: 13px; height: 13px; accent-color: var(--accent); }
+.cardtitle { font-weight: 600; font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cardmeta { display: flex; gap: 8px; align-items: center; color: var(--muted); font-size: 11px; }
+.cardactions { display: flex; gap: 4px; flex-wrap: wrap; }
 .librow .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .titlerow { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .comixlink {

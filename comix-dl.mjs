@@ -1036,8 +1036,14 @@ async function checkStatus(url) {
       const el = document.querySelector(".mpage__badge--status");
       return el ? el.textContent.trim().toUpperCase() : null;
     });
+    const cover = await page.evaluate(() => {
+      const img = document.querySelector(".mpage__poster img, .poster img");
+      if (img && img.src) return img.src;
+      const og = document.querySelector('meta[property="og:image"]');
+      return og ? og.content : null;
+    });
     console.log(`  ${series} — ${status || "unknown"}`);
-    emit({ type: "status", url, series, status });
+    emit({ type: "status", url, series, status, cover });
     return true;
   } catch (err) {
     capture(err, { stage: "status" });

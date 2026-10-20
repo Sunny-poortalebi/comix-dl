@@ -164,7 +164,13 @@ function onEvent(ev) {
 }
 
 // --- library view -----------------------------------------------------------
-const lib = { data: null, filter: "all", sort: localStorage.getItem("libSort") || "lastRun" };
+const lib = {
+  data: null,
+  filter: "all",
+  sort: localStorage.getItem("libSort") || "lastRun",
+  view: localStorage.getItem("libView") || "list",
+  coverFetchStarted: false,
+};
 
 function showView(name) {
   const download = name === "download";
@@ -326,8 +332,141 @@ function renderLibrary() {
   const ongoingCount = all.filter((t) => t.watching && !isFinished(t)).length;
   els.libCount.textContent = `${all.length} titles · ${readCount} read · ${toReadCount} to read · ${ongoingCount} ongoing`;
   els.libEmpty.hidden = entries.length > 0;
+  els.libBody.className = lib.view === "covers" ? "lib-body libgrid" : "lib-body";
+  els.libBody.closest(".library").classList.toggle("covers", lib.view === "covers");
   els.libBody.innerHTML = "";
-  for (const t of entries) els.libBody.appendChild(libraryRow(t));
+
+  if (lib.view === "covers") {
+    for (const t of entries) els.libBody.appendChild(coverCard(t));
+    // first time in cover view, fill in covers for older entries
+    if (!lib.coverFetchStarted && entries.some((t) => t.url && !t.cover)) {
+      lib.coverFetchStarted = true;
+      log("fetching covers for titles that have none…");
+      window.api.libraryCovers().then((res) => {
+        if (res && !res.error) {
+          lib.data = res;
+          renderLibrary();
+        }
+      });
+    }
+  } else {
+    for (const t of entries) els.libBody.appendChild(libraryRow(t));
+  }
+}
+
+function coverCard(t) {
+  const card = document.createElement("div");
+  card.className = "libcard";
+
+  const wrap = document.createElement("div");
+  wrap.className = "coverwrap";
+  if (t.cover) {
+    const img = document.createElement("img");
+    img.className = "cover";
+    img.src = t.cover;
+    img.alt = "";
+    img.loading = "lazy";
+    wrap.appendChild(img);
+  } else {
+    const ph = document.createElement("div");
+    ph.className = "cover placeholder";
+    ph.textContent = (t.series || t.key || "?").slice(0, 1).toUpperCase();
+    wrap.appendChild(ph);
+  }
+  const read = document.createElement("label");
+  read.className = "readcheck";
+  const cb = document.createElement("input");
+  cb.type = "checkbox";
+  cb.checked = !!t.read;
+  cb.addEventListener("change", () => updateTitle(t.key, { read: cb.checked }));
+  read.append(cb, document.createTextNode("read"));
+  wrap.appendChild(read);
+
+  const title = document.createElement("div");
+  title.className = "cardtitle";
+  title.textContent = t.series || t.key;
+
+  const meta = document.createElement("div");
+  meta.className = "cardmeta";
+  const s = (t.status || "").toUpperCase();
+  const badge = document.createElement("span");
+  badge.className = `badge ${
+    s === "FINISHED"
+      ? "done"
+      : s === "HIATUS"
+        ? "hiatus"
+        : s === "CANCELLED" || s === "CANCELED"
+          ? "cancelled"
+          : s
+            ? "ongoing"
+            : ""
+  }`;
+  badge.textContent = t.status || "unchecked";
+  const ch = document.createElement("span");
+  ch.textContent = `${t.chaptersDone ?? 0}/${t.chaptersTotal ?? 0}`;
+  meta.append(badge, ch);
+
+  const stars = document.createElement("span");
+  stars.className = "stars";
+  for (let i = 1; i <= 5; i++) {
+    const b = document.createElement("button");
+    b.textContent = "★";
+    if ((t.score || 0) >= i) b.classList.add("on");
+    b.addEventListener("click", () => updateTitle(t.key, { score: t.score === i ? null : i }));
+    stars.appendChild(b);
+  }
+
+  const actions = document.createElement("div");
+  actions.className = "cardactions";
+  if (t.watching && t.url && s !== "FINISHED") {
+    const refresh = document.createElement("button");
+    refresh.className = "ghost small";
+    refresh.textContent = "↻";
+    refresh.title = "check status now";
+    refresh.addEventListener("click", async () => {
+      refresh.disabled = true;
+      const res = await window.api.libraryCheckOne(t.key);
+      refresh.disabled = false;
+      if (res?.error) return log(res.error, true);
+      lib.data = res;
+      renderLibrary();
+    });
+    actions.appendChild(refresh);
+  }
+  const epub = document.createElement("button");
+  epub.className = "ghost small";
+  epub.textContent = "epub";
+  if (t.epubPath) {
+    epub.title = t.epubPath;
+    epub.addEventListener("click", () => window.api.openPath(t.epubPath));
+  } else {
+    epub.disabled = true;
+    epub.title = "no EPUB built yet";
+  }
+  actions.appendChild(epub);
+  if (t.url) {
+    const visit = document.createElement("button");
+    visit.className = "comixlink";
+    visit.textContent = "↗";
+    visit.title = `open on comix.to — ${t.url}`;
+    visit.addEventListener("click", () => window.api.openExternal(t.url));
+    actions.appendChild(visit);
+  }
+  const del = document.createElement("button");
+  del.className = "ghost small del";
+  del.textContent = "×";
+  del.title = "remove from library (files stay on disk)";
+  del.addEventListener("click", async () => {
+    if (!window.confirm(`Remove “${t.series || t.key}” from the library?\nFiles on disk are not touched.`)) return;
+    const res = await window.api.libraryRemove(t.key);
+    if (res?.error) return log(res.error, true);
+    lib.data = res;
+    renderLibrary();
+  });
+  actions.appendChild(del);
+
+  card.append(wrap, title, meta, stars, actions);
+  return card;
 }
 
 async function loadLibrary() {
@@ -389,7 +528,7 @@ function renderSearchResults(results) {
     add.addEventListener("click", async () => {
       add.disabled = true;
       add.textContent = "…";
-      const res = await window.api.libraryTrack(r.url, r.title);
+      const res = await window.api.libraryTrack(r.url, r.title, r.thumb);
       if (res?.error) return log(res.error, true);
       lib.data = res;
       box.hidden = true;
@@ -444,13 +583,22 @@ els.start.addEventListener("click", start);
 els.stop.addEventListener("click", () => window.api.stop());
 els.tabDownload.addEventListener("click", () => showView("download"));
 els.tabLibrary.addEventListener("click", () => showView("library"));
-document.querySelectorAll(".chip").forEach((c) =>
+document.querySelectorAll(".chip[data-filter]").forEach((c) =>
   c.addEventListener("click", () => {
     lib.filter = c.dataset.filter;
-    document.querySelectorAll(".chip").forEach((x) => x.classList.toggle("active", x === c));
+    document.querySelectorAll(".chip[data-filter]").forEach((x) => x.classList.toggle("active", x === c));
     renderLibrary();
   }),
 );
+document.querySelectorAll("[data-libview]").forEach((b) => {
+  b.classList.toggle("active", b.dataset.libview === lib.view);
+  b.addEventListener("click", () => {
+    lib.view = b.dataset.libview;
+    localStorage.setItem("libView", lib.view);
+    document.querySelectorAll("[data-libview]").forEach((x) => x.classList.toggle("active", x === b));
+    renderLibrary();
+  });
+});
 els.libSort.value = lib.sort;
 els.libSort.addEventListener("change", () => {
   lib.sort = els.libSort.value;

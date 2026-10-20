@@ -261,7 +261,7 @@ ipcMain.handle("library:import", (_e, dir) => {
   return mergeLibraryFrom(dir);
 });
 
-ipcMain.handle("library:track", async (_e, url, name) => {
+ipcMain.handle("library:track", async (_e, url, name, cover) => {
   if (!/^https?:\/\/(www\.)?comix\.to\/title\//.test(url || "")) return { error: "paste a comix.to title URL" };
   const lib = loadLibrary();
   const slug = (String(url).match(/\/title\/([^/?#]+)/) || [])[1] || String(url);
@@ -273,7 +273,13 @@ ipcMain.handle("library:track", async (_e, url, name) => {
       .replace(/\b\w/g, (c) => c.toUpperCase());
   const key = libKey(nameHint);
   const cur = lib.titles[key] || { addedAt: Date.now(), read: false, score: null };
-  lib.titles[key] = { ...cur, series: cur.series || nameHint, url, watching: true };
+  lib.titles[key] = {
+    ...cur,
+    series: cur.series || nameHint,
+    url,
+    watching: true,
+    ...(cover ? { cover } : {}),
+  };
   saveLibrary(lib);
 
   // adding a title also resolves its status, so it lands in the right list
@@ -354,12 +360,30 @@ async function applyStatuses(events) {
       ...t,
       ...(ev.series ? { series: ev.series } : {}),
       status: ev.status || t.status || null,
+      ...(ev.cover ? { cover: ev.cover } : {}),
       checkedAt: Date.now(),
     };
   }
   saveLibrary(fresh);
   return fresh;
 }
+
+// backfill covers for entries that predate cover scraping (also refreshes status)
+ipcMain.handle("library:covers", async () => {
+  if (child || statusCheckRunning) return { error: "busy — try again in a moment" };
+  const lib = loadLibrary();
+  const need = [...new Set(Object.values(lib.titles).filter((t) => t.url && !t.cover).map((t) => t.url))];
+  if (!need.length) return lib;
+  statusCheckRunning = true;
+  try {
+    const events = await fetchStatuses(need);
+    const fresh = await applyStatuses(events);
+    send({ type: "libraryChanged" });
+    return fresh;
+  } finally {
+    statusCheckRunning = false;
+  }
+});
 
 ipcMain.handle("library:check-one", async (_e, key) => {
   if (child) return { error: "a download is running — try again when it finishes" };
