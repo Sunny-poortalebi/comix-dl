@@ -57,6 +57,8 @@ button.del:hover { border-color: var(--error); }
 .badge.done { color: var(--success); border-color: #1f6b4d; }
 .badge.hiatus { color: #8fb8ff; border-color: #2f4c7a; }
 .badge.cancelled { color: var(--error); border-color: #7a2f2f; }
+.badge.new { color: #ff8fbf; border-color: #7a2f56; background: transparent; cursor: pointer; }
+.badge.new:hover { border-color: #ff8fbf; }
 
 .searchresults { display: flex; flex-direction: column; padding: 6px; max-height: 220px; overflow-y: auto; }
 .srhead { display: flex; justify-content: space-between; align-items: center; padding: 2px 8px 6px; color: var(--muted); font-size: 11px; }

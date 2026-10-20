@@ -217,6 +217,20 @@ function libraryRow(t) {
     });
     nameRow.appendChild(link);
   }
+  if (t.newChapter) {
+    const nb = document.createElement("button");
+    nb.className = "badge new";
+    nb.textContent = `NEW Ch.${t.newChapter}`;
+    nb.title = "chapters appeared since the last check — click to dismiss";
+    nb.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      const res = await window.api.libraryAck(t.key);
+      if (res?.error) return log(res.error, true);
+      lib.data = res;
+      renderLibrary();
+    });
+    nameRow.appendChild(nb);
+  }
   title.appendChild(nameRow);
   if (t.status || t.watching) {
     const s = (t.status || "").toUpperCase();
@@ -280,9 +294,8 @@ function libraryRow(t) {
 
   const actions = document.createElement("span");
   actions.className = "rowactions";
-  // unfinished watched titles can be re-checked on demand
-  const unfinished = (t.status || "").toUpperCase() !== "FINISHED";
-  if (t.watching && t.url && unfinished) {
+  // any title with a URL can be re-checked on demand
+  if (t.url) {
     const refresh = document.createElement("button");
     refresh.className = "ghost small";
     refresh.textContent = "↻";
@@ -405,6 +418,19 @@ function coverCard(t) {
   const ch = document.createElement("span");
   ch.textContent = `${t.chaptersDone ?? 0}/${t.chaptersTotal ?? 0}`;
   meta.append(badge, ch);
+  if (t.newChapter) {
+    const nb = document.createElement("button");
+    nb.className = "badge new";
+    nb.textContent = `NEW Ch.${t.newChapter}`;
+    nb.title = "chapters appeared since the last check — click to dismiss";
+    nb.addEventListener("click", async () => {
+      const res = await window.api.libraryAck(t.key);
+      if (res?.error) return log(res.error, true);
+      lib.data = res;
+      renderLibrary();
+    });
+    meta.appendChild(nb);
+  }
 
   const stars = document.createElement("span");
   stars.className = "stars";
@@ -418,7 +444,7 @@ function coverCard(t) {
 
   const actions = document.createElement("div");
   actions.className = "cardactions";
-  if (t.watching && t.url && s !== "FINISHED") {
+  if (t.url) {
     const refresh = document.createElement("button");
     refresh.className = "ghost small";
     refresh.textContent = "↻";

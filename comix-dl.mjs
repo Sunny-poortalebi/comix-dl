@@ -1042,8 +1042,14 @@ async function checkStatus(url) {
       const og = document.querySelector('meta[property="og:image"]');
       return og ? og.content : null;
     });
-    console.log(`  ${series} — ${status || "unknown"}`);
-    emit({ type: "status", url, series, status, cover });
+    const latestChapter = await page.evaluate(() => {
+      const row = document.querySelector(".mchap-row__primary");
+      if (!row) return null;
+      const m = /Ch\.\s*([\d.]+)/.exec(row.textContent || "");
+      return m ? Number(m[1]) : null;
+    });
+    console.log(`  ${series} — ${status || "unknown"} · latest ${latestChapter ?? "?"}`);
+    emit({ type: "status", url, series, status, cover, latestChapter });
     return true;
   } catch (err) {
     capture(err, { stage: "status" });

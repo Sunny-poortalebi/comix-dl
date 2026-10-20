@@ -356,10 +356,15 @@ async function applyStatuses(events) {
     const found = Object.entries(fresh.titles).find(([, t]) => t.url === ev.url);
     if (!found) continue;
     const [key, t] = found;
+    const latest = ev.latestChapter != null && ev.latestChapter !== "" ? Number(ev.latestChapter) : null;
+    const prev = typeof t.latestChapter === "number" ? t.latestChapter : null;
+    const isNew = latest != null && prev != null && latest > prev;
     fresh.titles[key] = {
       ...t,
       ...(ev.series ? { series: ev.series } : {}),
       status: ev.status || t.status || null,
+      ...(latest != null ? { latestChapter: latest } : {}),
+      ...(isNew ? { newChapter: latest, newChapterAt: Date.now() } : {}),
       ...(ev.cover ? { cover: ev.cover } : {}),
       checkedAt: Date.now(),
     };
@@ -383,6 +388,16 @@ ipcMain.handle("library:covers", async () => {
   } finally {
     statusCheckRunning = false;
   }
+});
+
+ipcMain.handle("library:ack", (_e, key) => {
+  const lib = loadLibrary();
+  if (lib.titles[key]) {
+    const { newChapter, newChapterAt, ...rest } = lib.titles[key];
+    lib.titles[key] = rest;
+    saveLibrary(lib);
+  }
+  return lib;
 });
 
 ipcMain.handle("library:check-one", async (_e, key) => {
