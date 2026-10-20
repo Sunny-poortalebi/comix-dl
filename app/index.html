@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'" />
+  <title>comix-dl</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div>
+      <h1>comix-dl</h1>
+      <p class="sub">manga → webp → epub · resumable</p>
+    </div>
+    <div class="status" id="status">idle</div>
+  </header>
+
+  <section class="panel config">
+    <div class="field wide">
+      <label for="url">Title URL</label>
+      <input id="url" placeholder="https://comix.to/title/…" spellcheck="false" />
+    </div>
+    <div class="field">
+      <label for="group">Preferred group</label>
+      <input id="group" value="Violet Scans" />
+    </div>
+    <div class="field narrow">
+      <label for="limit">Chapter limit <span class="hint">0 = all</span></label>
+      <input id="limit" type="number" min="0" value="0" />
+    </div>
+    <div class="field narrow">
+      <label for="maxMb">EPUB cap (MB)</label>
+      <input id="maxMb" type="number" min="1" value="300" />
+    </div>
+    <div class="field wide">
+      <label for="out">Output folder</label>
+      <div class="row">
+        <input id="out" spellcheck="false" />
+        <button class="ghost" id="pickOut">…</button>
+      </div>
+    </div>
+    <div class="actions">
+      <button id="start" class="primary">Start</button>
+      <button id="stop" class="danger" disabled>Stop</button>
+      <label class="check"><input id="noEpub" type="checkbox" /> skip EPUB</label>
+      <button class="ghost" id="openOut">Open folder</button>
+      <button class="ghost" id="openEpub" disabled>Open EPUB</button>
+    </div>
+  </section>
+
+  <section class="panel progress">
+    <div class="headline">
+      <span id="seriesName">—</span>
+      <span id="runCount"></span>
+    </div>
+    <div class="bar big"><div class="fill" id="overallFill"></div></div>
+    <div class="current" id="current">no active chapter</div>
+    <div class="bar"><div class="fill accent" id="pageFill"></div></div>
+    <div class="epub" id="epubRow" hidden>
+      <span>EPUB</span>
+      <div class="bar"><div class="fill success" id="epubFill"></div></div>
+      <span id="epubText"></span>
+    </div>
+  </section>
+
+  <section class="panel chapters">
+    <div class="chapters-head">
+      <span>Chapter</span><span>Group</span><span>Pages</span><span>Status</span>
+    </div>
+    <div class="chapters-body" id="chapters"></div>
+  </section>
+
+  <section class="panel logpanel">
+    <div class="loghead"><span>Log</span><button class="ghost small" id="clearLog">clear</button></div>
+    <pre id="log"></pre>
+  </section>
+
+  <script src="renderer.js"></script>
+</body>
+</html>

@@ -1,0 +1,23 @@
+{
+  "name": "comix-dl",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "main": "app/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "build": "electron-packager . comix-dl --platform=darwin --arch=arm64 --out=dist --overwrite",
+    "test": "node test/run.mjs"
+  },
+  "dependencies": {
+    "@sentry/electron": "^8.3.0",
+    "@sentry/node": "^11.8.0",
+    "puppeteer-core": "^23.11.1",
+    "sharp": "^0.34.5",
+    "yazl": "^3.3.1"
+  },
+  "devDependencies": {
+    "@electron/packager": "^18.3.6",
+    "electron": "^44.9.2"
+  }
+}

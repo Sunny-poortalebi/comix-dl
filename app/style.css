@@ -1,0 +1,102 @@
+:root {
+  --bg: #0f1117;
+  --panel: #171a23;
+  --panel-2: #1d2130;
+  --border: #2a2f42;
+  --fg: #e7e9f0;
+  --muted: #8b92a8;
+  --accent: #7c8cff;
+  --success: #3ddc97;
+  --error: #ff6b6b;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  font: 13px/1.45 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  background: var(--bg);
+  color: var(--fg);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.topbar { display: flex; align-items: center; justify-content: space-between; }
+h1 { font-size: 18px; margin: 0; letter-spacing: 0.3px; }
+.sub { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+.status {
+  font-size: 11px; padding: 4px 10px; border-radius: 999px;
+  background: var(--panel-2); color: var(--muted); border: 1px solid var(--border);
+}
+.status.running { color: var(--accent); border-color: var(--accent); }
+.status.done { color: var(--success); border-color: var(--success); }
+.status.failed { color: var(--error); border-color: var(--error); }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 12px;
+}
+
+.config { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.field { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.field.wide { grid-column: span 2; }
+.field.narrow { grid-column: span 1; }
+label { color: var(--muted); font-size: 11px; }
+.hint { color: #5d6478; }
+input[type="text"], input[type="number"], input:not([type]) {
+  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
+  border-radius: 7px; padding: 8px 10px; font: inherit; min-width: 0;
+}
+input:focus { outline: none; border-color: var(--accent); }
+.row { display: flex; gap: 6px; }
+.row input { flex: 1; }
+.actions { grid-column: span 4; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+button {
+  font: inherit; border-radius: 8px; border: 1px solid var(--border);
+  background: var(--panel-2); color: var(--fg); padding: 8px 14px; cursor: pointer;
+}
+button:hover { border-color: var(--accent); }
+button:disabled { opacity: 0.45; cursor: default; }
+button.primary { background: var(--accent); border-color: var(--accent); color: #0b0d14; font-weight: 600; }
+button.danger { color: var(--error); }
+button.ghost { background: transparent; }
+button.small { padding: 2px 8px; font-size: 11px; }
+.check { color: var(--muted); display: flex; align-items: center; gap: 6px; font-size: 12px; }
+
+.progress .headline { display: flex; justify-content: space-between; margin-bottom: 8px; color: var(--muted); }
+#seriesName { color: var(--fg); font-weight: 600; }
+.bar { height: 8px; background: var(--panel-2); border-radius: 999px; overflow: hidden; }
+.bar.big { height: 12px; margin-bottom: 8px; }
+.bar .fill { height: 100%; width: 0; background: var(--accent); transition: width 0.25s ease; }
+.bar .fill.accent { background: #5a6bff; }
+.bar .fill.success { background: var(--success); }
+.current { color: var(--muted); font-size: 12px; margin: 6px 0; }
+.epub { display: flex; align-items: center; gap: 10px; margin-top: 10px; font-size: 12px; color: var(--muted); }
+.epub .bar { flex: 1; }
+
+.chapters { flex: 1; min-height: 120px; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.chapters-head, .chapters-body .ch {
+  display: grid; grid-template-columns: 1.4fr 1.2fr 0.6fr 0.8fr; gap: 8px;
+  padding: 7px 12px; align-items: center;
+}
+.chapters-head { color: var(--muted); font-size: 11px; border-bottom: 1px solid var(--border); }
+.chapters-body { overflow-y: auto; }
+.ch { border-bottom: 1px solid rgba(42, 47, 66, 0.5); }
+.ch .st { font-size: 11px; color: var(--muted); }
+.ch .st.ok { color: var(--success); }
+.ch .st.bad { color: var(--error); }
+.ch .st.work { color: var(--accent); }
+
+.logpanel { height: 170px; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
+.loghead { display: flex; justify-content: space-between; align-items: center; padding: 6px 12px; border-bottom: 1px solid var(--border); color: var(--muted); font-size: 11px; }
+#log {
+  margin: 0; padding: 8px 12px; overflow-y: auto; flex: 1;
+  font: 11px/1.5 "SF Mono", Menlo, monospace; color: #a9b1c6; white-space: pre-wrap;
+}
+#log .err { color: var(--error); }
