@@ -972,6 +972,19 @@ async function downloadSeries(titleUrl, opts) {
 async function searchTitles(query) {
   const { browser, page, stopHeartbeat } = await openChapter("https://comix.to/");
   try {
+    // include every content rating (safe → pornographic) in the site's search;
+    // comix reads this persisted settings store when building content_rating[]
+    await page.evaluate(() => {
+      try {
+        const raw = localStorage.getItem("settings_v2");
+        const s = raw ? JSON.parse(raw) : { state: {}, version: 2 };
+        s.state = s.state || {};
+        s.state.contentFilter = "pornographic";
+        s.version = s.version ?? 2;
+        localStorage.setItem("settings_v2", JSON.stringify(s));
+      } catch {}
+    });
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 90_000 });
     await page.waitForSelector('input[placeholder="Search any title..."]', { timeout: 30_000 });
     const input = await page.$('input[placeholder="Search any title..."]');
     await input.click();
