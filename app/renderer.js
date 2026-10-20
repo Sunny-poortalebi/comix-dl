@@ -21,7 +21,7 @@ const els = {
   viewDownload: $("viewDownload"), viewLibrary: $("viewLibrary"),
   libBody: $("libBody"), libEmpty: $("libEmpty"), libCount: $("libCount"), libRefresh: $("libRefresh"),
   libImport: $("libImport"),
-  trackUrl: $("trackUrl"), trackBtn: $("trackBtn"), checkStatuses: $("checkStatuses"),
+  trackUrl: $("trackUrl"), trackBtn: $("trackBtn"), checkStatuses: $("checkStatuses"), searchResults: $("searchResults"),
 };
 
 const st = {
@@ -291,6 +291,39 @@ async function updateTitle(key, patch) {
   renderLibrary();
 }
 
+function renderSearchResults(results) {
+  const box = els.searchResults;
+  box.innerHTML = "";
+  if (!results?.length) {
+    box.hidden = true;
+    return;
+  }
+  for (const r of results) {
+    const row = document.createElement("div");
+    row.className = "srrow";
+
+    const title = document.createElement("span");
+    title.className = "sr-title";
+    title.textContent = r.title;
+
+    const add = document.createElement("button");
+    add.className = "ghost small";
+    add.textContent = "track";
+    add.addEventListener("click", async () => {
+      const res = await window.api.libraryTrack(r.url, r.title);
+      if (res?.error) return log(res.error, true);
+      lib.data = res;
+      box.hidden = true;
+      renderLibrary();
+      log(`tracked ${r.title}`);
+    });
+
+    row.append(title, add);
+    box.appendChild(row);
+  }
+  box.hidden = false;
+}
+
 async function start() {
   if (st.running) return;
   const cfg = {
@@ -343,12 +376,26 @@ els.libImport.addEventListener("click", async () => {
   renderLibrary();
 });
 els.trackBtn.addEventListener("click", async () => {
-  const res = await window.api.libraryTrack(els.trackUrl.value.trim());
-  if (res?.error) return log(res.error, true);
-  lib.data = res;
-  els.trackUrl.value = "";
-  renderLibrary();
-  log("tracked — press “check status” to fetch its release status");
+  const value = els.trackUrl.value.trim();
+  if (!value) return;
+  els.trackBtn.disabled = true;
+  try {
+    if (/^https?:\/\//.test(value)) {
+      const res = await window.api.libraryTrack(value);
+      if (res?.error) return log(res.error, true);
+      lib.data = res;
+      els.trackUrl.value = "";
+      renderLibrary();
+      log("tracked — press “check status” to fetch its release status");
+      return;
+    }
+    const res = await window.api.librarySearch(value);
+    if (res?.error) return log(res.error, true);
+    renderSearchResults(res.results);
+    log(`${res.results.length} result(s) for “${value}”`);
+  } finally {
+    els.trackBtn.disabled = false;
+  }
 });
 els.checkStatuses.addEventListener("click", async () => {
   els.checkStatuses.disabled = true;

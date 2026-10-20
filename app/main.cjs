@@ -257,19 +257,32 @@ ipcMain.handle("library:import", (_e, dir) => {
   return mergeLibraryFrom(dir);
 });
 
-ipcMain.handle("library:track", (_e, url) => {
+ipcMain.handle("library:track", (_e, url, name) => {
   if (!/^https?:\/\/(www\.)?comix\.to\/title\//.test(url || "")) return { error: "paste a comix.to title URL" };
   const lib = loadLibrary();
   const slug = (String(url).match(/\/title\/([^/?#]+)/) || [])[1] || String(url);
-  const nameHint = slug
-    .replace(/^[a-z0-9]{3,8}-/i, "")
-    .replace(/-/g, " ")
-    .replace(/\b\w/g, (c) => c.toUpperCase());
+  const nameHint =
+    (name && String(name).trim()) ||
+    slug
+      .replace(/^[a-z0-9]{3,8}-/i, "")
+      .replace(/-/g, " ")
+      .replace(/\b\w/g, (c) => c.toUpperCase());
   const key = libKey(nameHint);
   const cur = lib.titles[key] || { addedAt: Date.now(), read: false, score: null };
   lib.titles[key] = { ...cur, series: cur.series || nameHint, url, watching: true };
   saveLibrary(lib);
   return lib;
+});
+
+ipcMain.handle("library:search", async (_e, query) => {
+  if (child) return { error: "a download is running — try again when it finishes" };
+  if (statusCheckRunning) return { error: "status check is running — try again in a moment" };
+  const q = String(query || "").trim();
+  if (!q) return { error: "type a title to search" };
+  const events = await runChildCapture([path.join(ROOT, "comix-dl.mjs"), "--progress", "--search", q]);
+  const hit = events.find((ev) => ev.type === "searchResults");
+  if (!hit) return { error: "search failed" };
+  return { results: hit.results || [] };
 });
 
 function runChildCapture(args) {

@@ -92,10 +92,11 @@ function parseArgs(argv) {
     else if (a === "--progress") PROGRESS = true;
     else if (a === "--self-test") opts.selfTest = true;
     else if (a === "--status-check") (opts.statusChecks ||= []).push(argv[++i]);
+    else if (a === "--search") opts.search = argv[++i];
     else if (a.startsWith("--")) fail(`unknown option: ${a}`);
     else urls.push(a);
   }
-  if (!opts.series && !opts.selfTest && !opts.statusChecks?.length && urls.length === 0)
+  if (!opts.series && !opts.selfTest && !opts.statusChecks?.length && !opts.search && urls.length === 0)
     fail("usage: node comix-dl.mjs <chapter-url> [...] | --series <title-url> [--group NAME] [--out DIR] [--no-epub] [--max-mb N]");
   return { urls, opts };
 }
@@ -967,6 +968,43 @@ async function downloadSeries(titleUrl, opts) {
   return ok;
 }
 
+/** Search comix.to through its own search box and return title results. */
+async function searchTitles(query) {
+  const { browser, page, stopHeartbeat } = await openChapter("https://comix.to/");
+  try {
+    await page.waitForSelector('input[placeholder="Search any title..."]', { timeout: 30_000 });
+    const input = await page.$('input[placeholder="Search any title..."]');
+    await input.click();
+    await page.keyboard.type(query, { delay: 40 });
+    await new Promise((r) => setTimeout(r, 1800));
+    const results = await page.evaluate(() => {
+      const links = [...document.querySelectorAll(".search-pop__section a[href*='/title/']")];
+      const seen = new Set();
+      const out = [];
+      for (const a of links) {
+        const href = new URL(a.getAttribute("href"), location.origin).href;
+        if (seen.has(href)) continue;
+        seen.add(href);
+        const t = a.querySelector(".search-pop__item-title");
+        out.push({ url: href, title: (t ? t.textContent : a.innerText).trim().replace(/\s+/g, " ") });
+      }
+      return out.slice(0, 10);
+    });
+    console.log(`  ${results.length} result(s) for “${query}”`);
+    emit({ type: "searchResults", query, results });
+    return results.length > 0;
+  } catch (err) {
+    capture(err, { stage: "search" });
+    console.error(`  search failed: ${err.message}`);
+    emit({ type: "searchResults", query, results: [], error: err.message });
+    return false;
+  } finally {
+    stopHeartbeat();
+    await page.close().catch(() => {});
+    browser.disconnect();
+  }
+}
+
 /** Read a title's release status without downloading anything. */
 async function checkStatus(url) {
   const { browser, page, stopHeartbeat } = await openChapter(url);
@@ -1024,6 +1062,11 @@ try {
   if (opts.selfTest) {
     runSelfTest();
     process.exit(0);
+  }
+  if (opts.search) {
+    const found = await searchTitles(opts.search);
+    if (SENTRY_ON) await Sentry.flush(3000);
+    process.exit(found ? 0 : 1);
   }
   if (opts.statusChecks?.length) {
     let allOk = true;

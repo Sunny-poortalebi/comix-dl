@@ -11,7 +11,8 @@ contextBridge.exposeInMainWorld("api", {
   libraryList: () => ipcRenderer.invoke("library:list"),
   libraryUpdate: (key, patch) => ipcRenderer.invoke("library:update", key, patch),
   libraryImport: (dir) => ipcRenderer.invoke("library:import", dir),
-  libraryTrack: (url) => ipcRenderer.invoke("library:track", url),
+  libraryTrack: (url, name) => ipcRenderer.invoke("library:track", url, name),
+  librarySearch: (query) => ipcRenderer.invoke("library:search", query),
   libraryCheck: () => ipcRenderer.invoke("library:check"),
   onLibraryChanged: (cb) => ipcRenderer.on("libraryChanged", () => cb()),
 });
