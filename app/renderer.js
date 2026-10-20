@@ -22,6 +22,7 @@ const els = {
   libBody: $("libBody"), libEmpty: $("libEmpty"), libCount: $("libCount"), libRefresh: $("libRefresh"),
   libImport: $("libImport"),
   trackUrl: $("trackUrl"), trackBtn: $("trackBtn"), checkStatuses: $("checkStatuses"), searchResults: $("searchResults"),
+  libSort: $("libSort"),
 };
 
 const st = {
@@ -163,7 +164,7 @@ function onEvent(ev) {
 }
 
 // --- library view -----------------------------------------------------------
-const lib = { data: null, filter: "all" };
+const lib = { data: null, filter: "all", sort: localStorage.getItem("libSort") || "lastRun" };
 
 function showView(name) {
   const download = name === "download";
@@ -259,7 +260,23 @@ function libraryRow(t) {
     open.title = "no EPUB built yet";
   }
 
-  row.append(cb, title, stars, chapters, date, open);
+  const del = document.createElement("button");
+  del.className = "ghost small del";
+  del.textContent = "×";
+  del.title = "remove from library (files stay on disk)";
+  del.addEventListener("click", async () => {
+    if (!window.confirm(`Remove “${t.series || t.key}” from the library?\nFiles on disk are not touched.`)) return;
+    const res = await window.api.libraryRemove(t.key);
+    if (res?.error) return log(res.error, true);
+    lib.data = res;
+    renderLibrary();
+  });
+
+  const actions = document.createElement("span");
+  actions.className = "rowactions";
+  actions.append(open, del);
+
+  row.append(cb, title, stars, chapters, date, actions);
   return row;
 }
 
@@ -267,6 +284,13 @@ function renderLibrary() {
   const data = lib.data;
   if (!data) return;
   const isFinished = (t) => (t.status || "").toUpperCase() === "FINISHED";
+  const sorters = {
+    lastRun: (a, b) => (b.lastRunAt || 0) - (a.lastRunAt || 0),
+    addedDesc: (a, b) => (b.addedAt || 0) - (a.addedAt || 0),
+    addedAsc: (a, b) => (a.addedAt || 0) - (b.addedAt || 0),
+    scoreDesc: (a, b) => (b.score ?? -1) - (a.score ?? -1) || (b.addedAt || 0) - (a.addedAt || 0),
+    scoreAsc: (a, b) => (a.score ?? 6) - (b.score ?? 6) || (b.addedAt || 0) - (a.addedAt || 0),
+  };
   const all = Object.entries(data.titles || {}).map(([key, t]) => ({ key, ...t }));
   const entries = all
     .filter((t) =>
@@ -278,7 +302,7 @@ function renderLibrary() {
             ? !!t.watching && !isFinished(t)
             : !t.read && (!t.watching || isFinished(t)),
     )
-    .sort((a, b) => (b.lastRunAt || 0) - (a.lastRunAt || 0));
+    .sort(sorters[lib.sort] || sorters.lastRun);
   const readCount = all.filter((t) => t.read).length;
   const toReadCount = all.filter((t) => !t.read && (!t.watching || isFinished(t))).length;
   const ongoingCount = all.filter((t) => t.watching && !isFinished(t)).length;
@@ -377,6 +401,12 @@ document.querySelectorAll(".chip").forEach((c) =>
     renderLibrary();
   }),
 );
+els.libSort.value = lib.sort;
+els.libSort.addEventListener("change", () => {
+  lib.sort = els.libSort.value;
+  localStorage.setItem("libSort", lib.sort);
+  renderLibrary();
+});
 els.libRefresh.addEventListener("click", loadLibrary);
 els.libImport.addEventListener("click", async () => {
   const dir = await window.api.chooseOut();

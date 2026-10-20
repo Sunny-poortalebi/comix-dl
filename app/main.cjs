@@ -354,6 +354,15 @@ ipcMain.handle("library:check", async () => {
   }
 });
 
+ipcMain.handle("library:remove", (_e, key) => {
+  const lib = loadLibrary();
+  if (lib.titles[key]) {
+    delete lib.titles[key];
+    saveLibrary(lib);
+  }
+  return lib;
+});
+
 ipcMain.handle("library:update", (_e, key, patch) => {
   const lib = loadLibrary();
   if (lib.titles[key]) {
