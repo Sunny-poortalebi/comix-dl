@@ -261,7 +261,7 @@ ipcMain.handle("library:import", (_e, dir) => {
   return mergeLibraryFrom(dir);
 });
 
-ipcMain.handle("library:track", (_e, url, name) => {
+ipcMain.handle("library:track", async (_e, url, name) => {
   if (!/^https?:\/\/(www\.)?comix\.to\/title\//.test(url || "")) return { error: "paste a comix.to title URL" };
   const lib = loadLibrary();
   const slug = (String(url).match(/\/title\/([^/?#]+)/) || [])[1] || String(url);
@@ -275,7 +275,20 @@ ipcMain.handle("library:track", (_e, url, name) => {
   const cur = lib.titles[key] || { addedAt: Date.now(), read: false, score: null };
   lib.titles[key] = { ...cur, series: cur.series || nameHint, url, watching: true };
   saveLibrary(lib);
-  return lib;
+
+  // adding a title also resolves its status, so it lands in the right list
+  if (child || statusCheckRunning) return lib;
+  statusCheckRunning = true;
+  try {
+    const events = await fetchStatuses([url]);
+    const fresh = await applyStatuses(events);
+    send({ type: "libraryChanged" });
+    return fresh;
+  } catch {
+    return lib;
+  } finally {
+    statusCheckRunning = false;
+  }
 });
 
 ipcMain.handle("library:search", async (_e, query) => {
@@ -321,32 +334,43 @@ function runChildCapture(args) {
 }
 
 let statusCheckRunning = false;
-ipcMain.handle("library:check", async () => {
+
+async function fetchStatuses(urls) {
+  if (!urls.length) return [];
+  const args = [path.join(ROOT, "comix-dl.mjs"), "--progress"];
+  for (const u of urls) args.push("--status-check", u);
+  const events = await runChildCapture(args);
+  return events.filter((e) => e.type === "status");
+}
+
+async function applyStatuses(events) {
+  const fresh = loadLibrary();
+  for (const ev of events) {
+    if (!ev.url) continue;
+    const found = Object.entries(fresh.titles).find(([, t]) => t.url === ev.url);
+    if (!found) continue;
+    const [key, t] = found;
+    fresh.titles[key] = {
+      ...t,
+      ...(ev.series ? { series: ev.series } : {}),
+      status: ev.status || t.status || null,
+      checkedAt: Date.now(),
+    };
+  }
+  saveLibrary(fresh);
+  return fresh;
+}
+
+ipcMain.handle("library:check-one", async (_e, key) => {
   if (child) return { error: "a download is running — try again when it finishes" };
   if (statusCheckRunning) return { error: "status check already running" };
   const lib = loadLibrary();
-  const watched = Object.entries(lib.titles).filter(([, t]) => t.watching && t.url);
-  if (!watched.length) return lib;
-
+  const t = lib.titles[key];
+  if (!t?.url) return { error: "no comix URL for this title" };
   statusCheckRunning = true;
   try {
-    const args = [path.join(ROOT, "comix-dl.mjs"), "--progress"];
-    for (const [, t] of watched) args.push("--status-check", t.url);
-    const events = await runChildCapture(args);
-    const fresh = loadLibrary();
-    for (const ev of events) {
-      if (ev.type !== "status" || !ev.url) continue;
-      const found = Object.entries(fresh.titles).find(([, t]) => t.url === ev.url);
-      if (!found) continue;
-      const [key, t] = found;
-      fresh.titles[key] = {
-        ...t,
-        ...(ev.series ? { series: ev.series } : {}),
-        status: ev.status || t.status || null,
-        checkedAt: Date.now(),
-      };
-    }
-    saveLibrary(fresh);
+    const events = await fetchStatuses([t.url]);
+    const fresh = await applyStatuses(events);
     send({ type: "libraryChanged" });
     return fresh;
   } finally {

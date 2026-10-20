@@ -21,7 +21,7 @@ const els = {
   viewDownload: $("viewDownload"), viewLibrary: $("viewLibrary"),
   libBody: $("libBody"), libEmpty: $("libEmpty"), libCount: $("libCount"), libRefresh: $("libRefresh"),
   libImport: $("libImport"),
-  trackUrl: $("trackUrl"), trackBtn: $("trackBtn"), checkStatuses: $("checkStatuses"), searchResults: $("searchResults"),
+  trackUrl: $("trackUrl"), trackBtn: $("trackBtn"), searchResults: $("searchResults"),
   libSort: $("libSort"),
 };
 
@@ -274,6 +274,24 @@ function libraryRow(t) {
 
   const actions = document.createElement("span");
   actions.className = "rowactions";
+  // unfinished watched titles can be re-checked on demand
+  const unfinished = (t.status || "").toUpperCase() !== "FINISHED";
+  if (t.watching && t.url && unfinished) {
+    const refresh = document.createElement("button");
+    refresh.className = "ghost small";
+    refresh.textContent = "↻";
+    refresh.title = "check status now";
+    refresh.addEventListener("click", async () => {
+      refresh.disabled = true;
+      const res = await window.api.libraryCheckOne(t.key);
+      refresh.disabled = false;
+      if (res?.error) return log(res.error, true);
+      lib.data = res;
+      renderLibrary();
+      log(`status updated: ${t.series || t.key}`);
+    });
+    actions.append(refresh);
+  }
   actions.append(open, del);
 
   row.append(cb, title, stars, chapters, date, actions);
@@ -333,6 +351,19 @@ function renderSearchResults(results) {
     box.hidden = true;
     return;
   }
+  const head = document.createElement("div");
+  head.className = "srhead";
+  const label = document.createElement("span");
+  label.textContent = "Results";
+  const close = document.createElement("button");
+  close.className = "ghost small";
+  close.textContent = "×";
+  close.title = "close results";
+  close.addEventListener("click", () => {
+    box.hidden = true;
+  });
+  head.append(label, close);
+  box.appendChild(head);
   for (const r of results) {
     const row = document.createElement("div");
     row.className = "srrow";
@@ -345,12 +376,16 @@ function renderSearchResults(results) {
     add.className = "ghost small";
     add.textContent = "track";
     add.addEventListener("click", async () => {
+      add.disabled = true;
+      add.textContent = "…";
       const res = await window.api.libraryTrack(r.url, r.title);
       if (res?.error) return log(res.error, true);
       lib.data = res;
       box.hidden = true;
+      els.trackUrl.value = "";
       renderLibrary();
-      log(`tracked ${r.title}`);
+      const entry = Object.values(lib.data.titles).find((t) => t.url === r.url);
+      log(`tracked ${r.title}${entry?.status ? ` — ${entry.status}` : ""}`);
     });
 
     row.append(title, add);
@@ -416,10 +451,11 @@ els.libImport.addEventListener("click", async () => {
   } catch {}
   renderLibrary();
 });
-els.trackBtn.addEventListener("click", async () => {
+async function submitTrack() {
   const value = els.trackUrl.value.trim();
   if (!value) return;
   els.trackBtn.disabled = true;
+  els.trackBtn.textContent = "…";
   try {
     if (/^https?:\/\//.test(value)) {
       const res = await window.api.libraryTrack(value);
@@ -427,7 +463,7 @@ els.trackBtn.addEventListener("click", async () => {
       lib.data = res;
       els.trackUrl.value = "";
       renderLibrary();
-      log("tracked — press “check status” to fetch its release status");
+      log("tracked — status resolved");
       return;
     }
     const res = await window.api.librarySearch(value);
@@ -436,16 +472,18 @@ els.trackBtn.addEventListener("click", async () => {
     log(`${res.results.length} result(s) for “${value}”`);
   } finally {
     els.trackBtn.disabled = false;
+    els.trackBtn.textContent = "track";
+  }
+}
+els.trackBtn.addEventListener("click", submitTrack);
+els.trackUrl.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    submitTrack();
   }
 });
-els.checkStatuses.addEventListener("click", async () => {
-  els.checkStatuses.disabled = true;
-  const res = await window.api.libraryCheck();
-  els.checkStatuses.disabled = false;
-  if (res?.error) return log(res.error, true);
-  lib.data = res;
-  renderLibrary();
-  log("status check complete");
+els.trackUrl.addEventListener("input", () => {
+  if (!els.trackUrl.value.trim()) els.searchResults.hidden = true;
 });
 els.pickOut.addEventListener("click", async () => {
   const dir = await window.api.chooseOut();

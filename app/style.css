@@ -11,6 +11,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 
 body {
   margin: 0;
@@ -58,6 +59,7 @@ button.del:hover { border-color: var(--error); }
 .badge.cancelled { color: var(--error); border-color: #7a2f2f; }
 
 .searchresults { display: flex; flex-direction: column; padding: 6px; max-height: 220px; overflow-y: auto; }
+.srhead { display: flex; justify-content: space-between; align-items: center; padding: 2px 8px 6px; color: var(--muted); font-size: 11px; }
 .srrow { display: flex; align-items: center; gap: 10px; padding: 7px 8px; border-radius: 7px; }
 .srrow:hover { background: var(--panel-2); }
 .srrow .sr-title { flex: 1; }
