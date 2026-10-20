@@ -81,10 +81,13 @@ function mergeLibraryFrom(dir) {
     const chapters = idx.chapters || [];
     const key = libKey(idx.series || e.name);
     const cur = lib.titles[key] || { addedAt: Date.now(), read: false, score: null };
+    // comix-epub writes <out>/<Series>.epub next to the series folder
+    const epubPath = path.join(dir, `${e.name}.epub`);
     lib.titles[key] = {
       ...cur,
       series: idx.series || e.name,
       outDir: seriesDir,
+      epubPath: fs.existsSync(epubPath) ? epubPath : null,
       chaptersTotal: chapters.length,
       chaptersDone: chapters.filter((c) => c.status === "done").length,
       lastRunAt: idx.updatedAt || cur.lastRunAt || Date.now(),

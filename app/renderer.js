@@ -221,8 +221,14 @@ function libraryRow(t) {
 
   const open = document.createElement("button");
   open.className = "ghost small";
-  open.textContent = "open";
-  open.addEventListener("click", () => window.api.openPath(t.outDir));
+  open.textContent = "epub";
+  if (t.epubPath) {
+    open.title = t.epubPath;
+    open.addEventListener("click", () => window.api.openPath(t.epubPath));
+  } else {
+    open.disabled = true;
+    open.title = "no EPUB built yet";
+  }
 
   row.append(cb, title, stars, chapters, date, open);
   return row;
