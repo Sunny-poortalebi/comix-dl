@@ -999,7 +999,16 @@ async function searchTitles(query) {
         if (seen.has(href)) continue;
         seen.add(href);
         const t = a.querySelector(".search-pop__item-title");
-        out.push({ url: href, title: (t ? t.textContent : a.innerText).trim().replace(/\s+/g, " ") });
+        const img = a.querySelector(".search-pop__thumb img");
+        const type = a.querySelector(".search-pop__type");
+        const sub = a.querySelector(".search-pop__item-sub");
+        out.push({
+          url: href,
+          title: (t ? t.textContent : a.innerText).trim().replace(/\s+/g, " "),
+          thumb: img ? img.src : null,
+          type: type ? type.textContent.trim() : null,
+          meta: sub ? sub.innerText.trim().replace(/\s+/g, " ") : null,
+        });
       }
       return out.slice(0, 10);
     });

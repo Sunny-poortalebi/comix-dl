@@ -368,6 +368,17 @@ function renderSearchResults(results) {
     const row = document.createElement("div");
     row.className = "srrow";
 
+    if (r.thumb) {
+      const thumb = document.createElement("img");
+      thumb.className = "srthumb";
+      thumb.src = r.thumb;
+      thumb.alt = "";
+      thumb.loading = "lazy";
+      row.appendChild(thumb);
+    }
+
+    const info = document.createElement("span");
+    info.className = "srinfo";
     const title = document.createElement("span");
     title.className = "sr-title";
     title.textContent = r.title;
@@ -388,7 +399,11 @@ function renderSearchResults(results) {
       log(`tracked ${r.title}${entry?.status ? ` — ${entry.status}` : ""}`);
     });
 
-    row.append(title, add);
+    const meta = document.createElement("span");
+    meta.className = "sr-meta";
+    meta.textContent = r.meta || r.type || "";
+    info.append(title, meta);
+    row.append(info, add);
     box.appendChild(row);
   }
   box.hidden = false;
