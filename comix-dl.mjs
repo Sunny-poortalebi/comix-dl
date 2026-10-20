@@ -16,8 +16,8 @@
 // asks you to solve it, then continues automatically.
 //
 // examples:
-//   node comix-dl.mjs https://comix.to/title/7zdxe-the-perks-of-being-a-villainess/11527257-chapter-109
-//   node comix-dl.mjs --series https://comix.to/title/7zdxe-the-perks-of-being-a-villainess --group "Violet Scans"
+//   node comix-dl.mjs https://comix.to/title/<slug>/<id>-chapter-<n>
+//   node comix-dl.mjs --series https://comix.to/title/<slug> --group "Your Group"
 //
 // How it works:
 //   1. Launches your installed Chrome with a persistent profile
@@ -37,7 +37,9 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-const CHROME = "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
+const CHROME =
+  process.env.COMIX_BROWSER ||
+  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
 const PROFILE = path.join(os.homedir(), ".comix-dl-profile");
 const DEBUG_PORT = 9333;
 

@@ -68,7 +68,7 @@ ipcMain.handle("start", async (_e, cfg) => {
   if (child) return { error: "a run is already active" };
   if (!cfg.url || !/^https?:\/\//.test(cfg.url)) return { error: "paste a comix.to title URL" };
 
-  const out = cfg.out || path.join(os.homedir(), "Desktop", "Manhwa");
+  const out = cfg.out || path.join(app.getPath("downloads"), "comix-dl");
   fs.mkdirSync(out, { recursive: true });
 
   const args = [
@@ -169,7 +169,7 @@ app.whenReady().then(() => {
         limit: Number(process.env.COMIX_SMOKE_LIMIT || 0),
         maxMb: Number(process.env.COMIX_SMOKE_MAXMB || 300),
         noEpub: process.env.COMIX_SMOKE_NOEPUB === "1",
-        out: process.env.COMIX_SMOKE_OUT || path.join(os.homedir(), "Desktop", "Manhwa"),
+        out: process.env.COMIX_SMOKE_OUT || path.join(app.getPath("downloads"), "comix-dl"),
       });
     }
   });

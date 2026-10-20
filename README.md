@@ -21,7 +21,7 @@ Download a manga series from comix.to as images, then pack it into a single EPUB
 
 - macOS (the packaged app targets `darwin-arm64`)
 - Node.js 22+ (developed on 24)
-- Brave Browser installed at `/Applications/Brave Browser.app` (the pipeline drives it via the DevTools protocol)
+- Brave Browser installed at `/Applications/Brave Browser.app` (default; override with `COMIX_BROWSER=/path/to/browser`)
 
 ## Install
 
@@ -36,7 +36,7 @@ npm start          # development
 npm run build      # produces dist/comix-dl-darwin-arm64/comix-dl.app
 ```
 
-Paste a comix.to **title URL**, pick the preferred group, set an optional chapter limit and EPUB cap, then **Start**. **Stop** is safe — Start resumes.
+Paste a comix.to **title URL**, pick the preferred group, set an optional chapter limit and EPUB cap, then **Start**. **Stop** is safe — Start resumes. Output defaults to `~/Downloads/comix-dl`.
 
 ## CLI
 
