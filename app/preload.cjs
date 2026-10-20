@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("api", {
   stop: () => ipcRenderer.invoke("stop"),
   chooseOut: () => ipcRenderer.invoke("chooseOut"),
   openPath: (p) => ipcRenderer.invoke("openPath", p),
+  openExternal: (url) => ipcRenderer.invoke("openExternal", url),
   onProgress: (cb) => ipcRenderer.on("progress", (_e, ev) => cb(ev)),
   onAutostart: (cb) => ipcRenderer.on("autostart", (_e, cfg) => cb(cfg)),
   reportError: (payload) => ipcRenderer.send("renderer-error", payload),

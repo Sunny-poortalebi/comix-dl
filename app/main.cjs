@@ -242,6 +242,10 @@ ipcMain.handle("openPath", async (_e, p) => {
   if (fs.existsSync(p)) await shell.openPath(p);
 });
 
+ipcMain.handle("openExternal", async (_e, url) => {
+  if (/^https?:\/\//.test(url || "")) await shell.openExternal(url);
+});
+
 // renderer errors arrive here because the UI runs without node integration
 ipcMain.on("renderer-error", (_e, payload) => {
   if (!SENTRY_DSN) return;

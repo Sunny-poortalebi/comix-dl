@@ -194,12 +194,23 @@ function libraryRow(t) {
 
   const title = document.createElement("span");
   title.className = "title";
-  title.textContent = t.series || t.key;
+  const nameRow = document.createElement("span");
+  nameRow.className = "titlerow";
+  const nameText = document.createElement("span");
+  nameText.textContent = t.series || t.key;
+  nameRow.appendChild(nameText);
   if (t.url) {
-    const small = document.createElement("small");
-    small.textContent = t.url.replace(/^https?:\/\//, "");
-    title.appendChild(small);
+    const link = document.createElement("button");
+    link.className = "comixlink";
+    link.textContent = "↗";
+    link.title = `open on comix.to — ${t.url}`;
+    link.addEventListener("click", (e) => {
+      e.stopPropagation();
+      window.api.openExternal(t.url);
+    });
+    nameRow.appendChild(link);
   }
+  title.appendChild(nameRow);
   if (t.status || t.watching) {
     const s = (t.status || "").toUpperCase();
     const cls =

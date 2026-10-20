@@ -63,6 +63,12 @@ body {
 .lib-body { overflow-y: auto; }
 .librow { border-bottom: 1px solid rgba(42, 47, 66, 0.5); }
 .librow .title { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.titlerow { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.comixlink {
+  flex: none; border: 1px solid var(--border); background: transparent; color: var(--muted);
+  border-radius: 6px; padding: 0 5px; font-size: 11px; line-height: 17px; cursor: pointer;
+}
+.comixlink:hover { color: var(--fg); border-color: var(--accent); }
 .librow .title small { display: block; font-weight: 400; color: var(--muted); font-size: 11px; }
 .librow input[type="checkbox"] { width: 16px; height: 16px; accent-color: var(--accent); }
 .stars { display: inline-flex; gap: 2px; }
