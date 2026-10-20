@@ -19,9 +19,9 @@ Download a manga series from comix.to as images, then pack it into a single EPUB
 
 ## Requirements
 
-- macOS (the packaged app targets `darwin-arm64`)
-- Node.js 22+ (developed on 24)
-- Brave Browser installed at `/Applications/Brave Browser.app` (default; override with `COMIX_BROWSER=/path/to/browser`)
+- macOS, Windows or Linux (prebuilt apps: macOS arm64, Windows x64, Linux x64)
+- Node.js 22+ (developed on 24) when running from source
+- Brave Browser (default paths per OS: macOS `/Applications/Brave Browser.app`, Windows `C:\Program Files\BraveSoftware\...`, Linux `/usr/bin/brave-browser`; override with `COMIX_BROWSER=/path/to/browser`)
 
 ## Install
 

@@ -37,9 +37,13 @@ import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
 
-const CHROME =
-  process.env.COMIX_BROWSER ||
-  "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser";
+const DEFAULT_BROWSER =
+  process.platform === "darwin"
+    ? "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser"
+    : process.platform === "win32"
+      ? "C:\\Program Files\\BraveSoftware\\Brave-Browser\\Application\\brave.exe"
+      : "/usr/bin/brave-browser";
+const CHROME = process.env.COMIX_BROWSER || DEFAULT_BROWSER;
 const PROFILE = path.join(os.homedir(), ".comix-dl-profile");
 const DEBUG_PORT = 9333;
 
