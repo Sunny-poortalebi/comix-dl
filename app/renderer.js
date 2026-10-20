@@ -201,8 +201,19 @@ function libraryRow(t) {
     title.appendChild(small);
   }
   if (t.status || t.watching) {
+    const s = (t.status || "").toUpperCase();
+    const cls =
+      s === "FINISHED"
+        ? "done"
+        : s === "HIATUS"
+          ? "hiatus"
+          : s === "CANCELLED" || s === "CANCELED"
+            ? "cancelled"
+            : s
+              ? "ongoing"
+              : "";
     const badge = document.createElement("small");
-    badge.className = `badge ${t.status === "FINISHED" ? "done" : t.status ? "ongoing" : ""}`;
+    badge.className = `badge ${cls}`;
     badge.textContent = t.status || "unchecked";
     title.appendChild(badge);
   }
@@ -244,6 +255,7 @@ function libraryRow(t) {
 function renderLibrary() {
   const data = lib.data;
   if (!data) return;
+  const isFinished = (t) => (t.status || "").toUpperCase() === "FINISHED";
   const all = Object.entries(data.titles || {}).map(([key, t]) => ({ key, ...t }));
   const entries = all
     .filter((t) =>
@@ -251,15 +263,15 @@ function renderLibrary() {
         ? true
         : lib.filter === "read"
           ? !!t.read
-          : lib.filter === "watching"
-            ? !!t.watching
-            : !t.read && !t.watching,
+          : lib.filter === "ongoing"
+            ? !!t.watching && !isFinished(t)
+            : !t.read && (!t.watching || isFinished(t)),
     )
     .sort((a, b) => (b.lastRunAt || 0) - (a.lastRunAt || 0));
   const readCount = all.filter((t) => t.read).length;
-  const watchCount = all.filter((t) => t.watching).length;
-  const toReadCount = all.filter((t) => !t.read && !t.watching).length;
-  els.libCount.textContent = `${all.length} titles · ${readCount} read · ${toReadCount} to read · ${watchCount} incomplete`;
+  const toReadCount = all.filter((t) => !t.read && (!t.watching || isFinished(t))).length;
+  const ongoingCount = all.filter((t) => t.watching && !isFinished(t)).length;
+  els.libCount.textContent = `${all.length} titles · ${readCount} read · ${toReadCount} to read · ${ongoingCount} ongoing`;
   els.libEmpty.hidden = entries.length > 0;
   els.libBody.innerHTML = "";
   for (const t of entries) els.libBody.appendChild(libraryRow(t));

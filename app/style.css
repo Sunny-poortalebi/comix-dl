@@ -46,6 +46,8 @@ body {
 }
 .badge.ongoing { color: #ffcc4d; border-color: #7a6220; }
 .badge.done { color: var(--success); border-color: #1f6b4d; }
+.badge.hiatus { color: #8fb8ff; border-color: #2f4c7a; }
+.badge.cancelled { color: var(--error); border-color: #7a2f2f; }
 
 .library { flex: 1; display: flex; flex-direction: column; padding: 0; overflow: hidden; }
 .lib-head, .librow {
