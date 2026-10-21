@@ -753,6 +753,18 @@ async function clickTrusted(page, selector) {
   return true;
 }
 
+/** Advance the chapter-list pager: aria Next button, numeric pager, or arrow. */
+async function clickNextPage(page) {
+  for (const sel of [
+    'button[aria-label="Next page"]',
+    '.npager__num.is-active + .npager__num',
+    '.npager__next:not([disabled])',
+  ]) {
+    if (await clickTrusted(page, sel)) return true;
+  }
+  return false;
+}
+
 async function firstRowHref(page) {
   return page.evaluate(() => document.querySelector('a[href*="chapter-"]')?.href || null);
 }
@@ -783,11 +795,12 @@ async function scrapeRows(page) {
   });
 }
 
-/** Full walk: trusted clicks on Next (the click also satisfies the site's
+/** Full walk: trusted clicks on the pager (the click also satisfies the site's
  *  user-activity guard for the pagination request it triggers). */
 async function enumerateReleases(page) {
   await page.waitForSelector('a[href*="chapter-"]', { timeout: 60_000 });
   const rows = new Map();
+  let complete = false;
   for (let guard = 0; guard < 80; guard++) {
     const batch = await scrapeRows(page);
     if (!batch.length) break;
@@ -795,12 +808,33 @@ async function enumerateReleases(page) {
     process.stdout.write(`\r  enumerating: ${rows.size} releases`);
 
     const prev = batch[0].href;
-    if (!(await clickTrusted(page, 'button[aria-label="Next page"]'))) break;
+    if (!(await clickNextPage(page))) {
+      complete = true;
+      break;
+    }
     if (!(await waitForRowsChange(page, prev))) break;
     await POLITE(2500, 4500);
   }
   process.stdout.write("\n");
-  return [...rows.values()];
+  return { rows: [...rows.values()], complete };
+}
+
+/** Go to the last page: aria button, else the highest numeric pager button. */
+async function clickLastPage(page) {
+  if (await clickTrusted(page, 'button[aria-label="Last page"]')) return true;
+  return clickTrusted(page, '.npager .npager__num:last-of-type');
+}
+
+/** Go one page back: aria button, else the numeric button before the active one. */
+async function clickPrevPage(page) {
+  if (await clickTrusted(page, 'button[aria-label="Previous page"]')) return true;
+  const k = await page.evaluate(() => {
+    const nums = [...document.querySelectorAll('.npager__num')];
+    const i = nums.findIndex((b) => b.classList.contains('is-active'));
+    return i > 0 ? i : -1; // nth-of-type is 1-based: index i is the previous page
+  });
+  if (k < 1) return false;
+  return clickTrusted(page, `.npager .npager__num:nth-of-type(${k})`);
 }
 
 /** Sorted newest-first, so the oldest chapters are on the last page — jump
@@ -822,7 +856,7 @@ async function locateOldestChapters(page, topN, preferGroup) {
   await collect();
   if (found.size < need.size) {
     const prev = await firstRowHref(page);
-    if (await clickTrusted(page, 'button[aria-label="Last page"]')) {
+    if (await clickLastPage(page)) {
       if (await waitForRowsChange(page, prev)) {
         await POLITE(2000, 3500);
         await collect();
@@ -837,7 +871,7 @@ async function locateOldestChapters(page, topN, preferGroup) {
   const complete = () => [...need].every((num) => found.has(num) && (!preferGroup || hasPreferred(num)));
   for (let i = 0; i < 8 && !complete(); i++) {
     const prev = await firstRowHref(page);
-    if (!(await clickTrusted(page, 'button[aria-label="Previous page"]'))) break;
+    if (!(await clickPrevPage(page))) break;
     if (!(await waitForRowsChange(page, prev))) break;
     await POLITE(2000, 3500);
     await collect();
@@ -895,7 +929,12 @@ async function downloadSeries(titleUrl, opts) {
     if (existsSync(cachePath)) {
       try {
         const cached = JSON.parse(await readFile(cachePath, "utf8"));
-        if (cached.fetchedAt && Date.now() - cached.fetchedAt < 14 * 864e5 && cached.rows?.length) {
+        if (
+          cached.complete === true &&
+          cached.fetchedAt &&
+          Date.now() - cached.fetchedAt < 14 * 864e5 &&
+          cached.rows?.length
+        ) {
           releases = cached.rows;
           console.log(`  using cached chapter list (${releases.length} releases)`);
         }
@@ -905,9 +944,12 @@ async function downloadSeries(titleUrl, opts) {
       if (opts.limit) {
         releases = await locateOldestChapters(page, opts.limit, opts.group);
       } else {
-        releases = await enumerateReleases(page);
+        const enumerated = await enumerateReleases(page);
+        if (!enumerated.complete)
+          fail("could not enumerate the whole chapter list (pager changed?) — refusing to cache or download a partial list");
+        releases = enumerated.rows;
         await mkdir(seriesDirEarly, { recursive: true });
-        await writeFile(cachePath, JSON.stringify({ fetchedAt: Date.now(), rows: releases }, null, 1));
+        await writeFile(cachePath, JSON.stringify({ complete: true, fetchedAt: Date.now(), rows: releases }, null, 1));
       }
     }
   } finally {
