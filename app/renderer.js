@@ -27,7 +27,7 @@ const els = {
 
 const st = {
   running: false, outDir: null, epubPath: null, series: null,
-  picked: 0, queued: 0, done: 0, failed: 0, current: null, rows: new Map(),
+  picked: 0, queued: 0, done: 0, failed: 0, failedCount: 0, current: null, rows: new Map(),
 };
 
 function log(line, err = false) {
@@ -151,14 +151,23 @@ function onEvent(ev) {
       log(`epub written: ${ev.path}`);
       break;
     case "runDone":
-      log(ev.ok ? "run completed" : "run finished with failures");
+      st.failedCount = ev.failed || 0;
+      log(ev.ok ? "run completed" : `run finished with ${ev.failed || 0} failed chapter(s)`);
       break;
     case "exit":
       st.running = false;
       els.start.disabled = false;
       els.stop.disabled = true;
-      setStatus(ev.code === 0 ? "done" : "failed", ev.code === 0 ? "done" : "failed");
-      els.current.textContent = ev.code === 0 ? "all done" : `exited with code ${ev.code}`;
+      if (ev.code === 0) {
+        setStatus("done", "done");
+        els.current.textContent = "all done";
+      } else if (ev.code === 2) {
+        setStatus("partial", "partial");
+        els.current.textContent = `finished — ${st.failedCount} chapter(s) failed (rerun to retry)`;
+      } else {
+        setStatus("failed", "failed");
+        els.current.textContent = `exited with code ${ev.code}`;
+      }
       break;
   }
 }

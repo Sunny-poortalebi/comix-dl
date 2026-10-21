@@ -13,6 +13,7 @@ Download a manga series from comix.to as images, then pack it into a single EPUB
   - `index.json` — human-readable series summary (`total / urls / files / status` per chapter).
   - Existing `page-*.webp` files are skipped; only missing panels are retried.
 - **Per-panel recovery** — missing URLs are re-attempted individually (scroll into view, poll, viewport cycling), not by re-harvesting the chapter. Small gaps skip the full sweep entirely.
+- **Failure recovery** — transient CDN/connection errors retry with backoff (honoring `Retry-After`); chapters that still fail get a second, gentler pass (~45s cool-down, 2 workers, 8 attempts). A series with a few stubborn chapters still builds an EPUB from the successful ones (failed folders are skipped) and exits `2`; rerunning the title retries only the failed chapters.
 - **EPUB output** — one EPUB3 book with `nav.xhtml` + `toc.ncx`, pages re-encoded to WebP under a size budget (default 300 MB) with per-page adaptive quality.
 - **Desktop app** — Electron window with per-chapter status, live harvest/download progress, EPUB progress, stop/resume.
 - **Library** — persistent history of downloaded titles (`~/.comix-dl/library.json`) with a read checkbox (read / to-read lists), 1–5 star scores, chapter counts and last-run dates. Existing output folders can be imported with “add folder”. Track titles by name (searches comix.to, including all content ratings: safe → pornographic) or URL without downloading; “check status” pulls comix's own status (RELEASING / HIATUS / FINISHED / …) and finished titles move into the to-read list automatically.
@@ -55,7 +56,7 @@ node comix-dl.mjs --series https://comix.to/title/<slug> --group "Violet Scans" 
 node comix-epub.mjs "The Perks of Being a Villainess" --max-mb 300
 ```
 
-Options: `--out DIR`, `--limit N`, `--group NAME`, `--max-mb N`, `--no-epub`, `--progress` (NDJSON events for the app), `--self-test`.
+Options: `--out DIR`, `--limit N`, `--group NAME`, `--max-mb N`, `--no-epub`, `--progress` (NDJSON events for the app), `--self-test`. Exit codes: `0` complete, `2` partial (some chapters failed; EPUB built from the rest), `1` failed or nothing to build.
 
 ## How it works
 

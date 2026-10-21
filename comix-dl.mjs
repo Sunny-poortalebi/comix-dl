@@ -525,11 +525,12 @@ function retryAfterMs(value) {
 function pageBackoff(attempt, err) {
   const advised = retryAfterMs(err.retryAfter);
   if (advised != null) return Math.min(advised, 30_000);
-  const base = Math.min(800 * 2 ** (attempt - 1), 8000);
+  // connection-level failures need a longer cool-off than HTTP load shedding
+  const base = Math.min((err.status ? 800 : 1200) * 2 ** (attempt - 1), 15_000);
   return Math.round(base / 2 + Math.random() * (base / 2));
 }
 
-async function downloadAll(pages, dir, headers = new Map()) {
+async function downloadAll(pages, dir, headers = new Map(), { concurrency = 6, attempts = 5 } = {}) {
   await mkdir(dir, { recursive: true });
   const entries = Object.entries(pages).sort((a, b) => a[0] - b[0]);
   const existing = new Set();
@@ -539,7 +540,6 @@ async function downloadAll(pages, dir, headers = new Map()) {
   }
   let done = 0;
   const failures = [];
-  const attempts = 5;
   let cooldownUntil = 0;
 
   async function one([num, url]) {
@@ -595,7 +595,9 @@ async function downloadAll(pages, dir, headers = new Map()) {
         const status = err.status;
         const retryable = !status || status === 408 || status === 429 || status >= 500;
         if (!retryable || attempt === attempts) {
-          failures.push({ num, url, err: `${String(err)}${retryable ? ` (after ${attempts} attempts)` : ""}` });
+          const why = err.cause?.code || err.cause?.message;
+          const label = why ? `${err.message} (${why})` : String(err);
+          failures.push({ num, url, err: `${label}${retryable ? ` (after ${attempts} attempts)` : ""}` });
           return;
         }
         const wait = pageBackoff(attempt, err);
@@ -608,7 +610,7 @@ async function downloadAll(pages, dir, headers = new Map()) {
 
   const queue = entries.slice();
   await Promise.all(
-    Array.from({ length: 6 }, async () => {
+    Array.from({ length: concurrency }, async () => {
       while (queue.length) await one(queue.shift());
     }),
   );
@@ -674,7 +676,10 @@ async function downloadChapter(url, opts, dest = null) {
       return false;
     }
 
-    let failures = await downloadAll(pages, dir, harvested.headers || new Map());
+    let failures = await downloadAll(pages, dir, harvested.headers || new Map(), {
+      concurrency: opts.dlConcurrency,
+      attempts: opts.dlAttempts,
+    });
     if (failures.length) {
       // cached CDN URLs expire (hosts rotate or go NXDOMAIN). Re-read just the
       // failed panels from a fresh reader document and retry once.
@@ -696,7 +701,10 @@ async function downloadChapter(url, opts, dest = null) {
         emit({ type: "chapterPartial", number: meta.chapter, missing: gaps.length, total: meta.pages });
         return false;
       }
-      failures = await downloadAll(pages, dir, new Map());
+      failures = await downloadAll(pages, dir, new Map(), {
+        concurrency: opts.dlConcurrency,
+        attempts: opts.dlAttempts,
+      });
     }
     if (failures.length) {
       console.error(`  ${failures.length} download(s) failed:`);
@@ -1043,17 +1051,53 @@ async function downloadSeries(titleUrl, opts) {
     return allOk;
   };
 
+  const remaining = () => limited.filter((r) => state.chapters[r.number]?.status !== "done");
+
   let ok = await runQueue(queue);
-  const retryList = queue.filter((r) => state.chapters[r.number]?.status !== "done");
-  if (retryList.length) {
-    console.log(`  retrying ${retryList.length} failed chapter(s)...`);
-    emit({ type: "retry", count: retryList.length });
+  let failed = remaining();
+  if (failed.length) {
+    console.log(`  retrying ${failed.length} failed chapter(s)...`);
+    emit({ type: "retry", count: failed.length });
     await POLITE(5000, 8000);
-    ok = (await runQueue(retryList)) && ok;
+    ok = (await runQueue(failed)) && ok;
   }
 
-  if (ok && opts.epub) {
-    console.log("  building epub...");
+  // connection-level failures (DNS/TLS resets) survive quick retries; back off
+  // longer and slow down, since hammering the CDN is what triggers them
+  failed = remaining();
+  if (failed.length) {
+    console.log(
+      `  ${failed.length} chapter(s) still failing — pausing ~45s, then retrying with 2 workers and longer backoff...`,
+    );
+    emit({ type: "retry", count: failed.length, gentle: true });
+    await POLITE(45000, 55000);
+    opts.dlConcurrency = 2;
+    opts.dlAttempts = 8;
+    try {
+      ok = (await runQueue(failed)) && ok;
+    } finally {
+      delete opts.dlConcurrency;
+      delete opts.dlAttempts;
+    }
+  }
+
+  failed = remaining();
+  const doneCount = limited.length - failed.length;
+  let exitOk = failed.length === 0;
+  if (failed.length) {
+    console.error(`  ${failed.length}/${limited.length} chapter(s) failed: ${failed.map((r) => r.number).join(", ").slice(0, 400)}`);
+    console.error(`  successful chapters are kept; rerun the same title to retry only these.`);
+    opts.exitCode = doneCount > 0 ? 2 : 1;
+  } else {
+    opts.exitCode = 0;
+  }
+
+  if (opts.epub && doneCount > 0) {
+    console.log(
+      failed.length
+        ? `  building epub from ${doneCount}/${limited.length} chapters (missing ${failed.length})...`
+        : "  building epub...",
+    );
     emit({ type: "epubStart" });
     const res = spawnSync(
       process.execPath,
@@ -1066,10 +1110,13 @@ async function downloadSeries(titleUrl, opts) {
       ],
       { stdio: "inherit" },
     );
-    ok = res.status === 0;
+    if (res.status !== 0) {
+      opts.exitCode = 1;
+      exitOk = false;
+    }
   }
-  emit({ type: "runDone", ok });
-  return ok;
+  emit({ type: "runDone", ok: !failed.length, failed: failed.length, total: limited.length });
+  return exitOk;
 }
 
 /** Search comix.to through its own search box and return title results. */
@@ -1219,7 +1266,7 @@ try {
     for (const url of urls) ok = (await downloadChapter(url, opts)) && ok;
   }
   if (SENTRY_ON) await Sentry.flush(3000);
-  process.exit(ok ? 0 : 1);
+  process.exit(ok ? 0 : opts.exitCode || 1);
 } catch (err) {
   capture(err, { stage: "fatal" });
   console.error(`comix-dl: ${err.message}`);

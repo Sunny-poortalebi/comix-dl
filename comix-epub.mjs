@@ -11,7 +11,7 @@
 import sharp from "sharp";
 import yazl from "yazl";
 import * as Sentry from "@sentry/node";
-import { readdir, stat } from "node:fs/promises";
+import { readdir, readFile, stat } from "node:fs/promises";
 import { createWriteStream, existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -70,10 +70,17 @@ const IMG_RE = /^page-(\d+)\.(webp|jpe?g|png)$/i;
 const QUALITY_LADDER = [78, 68, 58, 50, 42, 36];
 
 async function scanChapters(dir) {
+  // respect the download ledger: never bind a chapter that failed mid-way
+  let statuses = null;
+  try {
+    statuses = JSON.parse(await readFile(path.join(dir, "state.json"), "utf8")).chapters || null;
+  } catch {}
   const chapters = [];
   for (const name of (await readdir(dir)).sort()) {
     const m = /^Ch([\d.]+)\s*\(/.exec(name);
     if (!m) continue;
+    const num = String(parseFloat(m[1]));
+    if (statuses && statuses[num]?.status && statuses[num].status !== "done") continue;
     const chapDir = path.join(dir, name);
     if (!(await stat(chapDir)).isDirectory()) continue;
     const images = (await readdir(chapDir)).filter((f) => IMG_RE.test(f)).sort();

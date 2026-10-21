@@ -117,6 +117,7 @@ h1 { font-size: 18px; margin: 0; letter-spacing: 0.3px; }
 .status.running { color: var(--accent); border-color: var(--accent); }
 .status.done { color: var(--success); border-color: var(--success); }
 .status.failed { color: var(--error); border-color: var(--error); }
+.status.partial { color: var(--warning); border-color: var(--warning); }
 
 .panel {
   background: var(--panel);
