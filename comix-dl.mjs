@@ -645,16 +645,19 @@ async function downloadChapter(url, opts, dest = null) {
     // persist the panel index even when incomplete: the next attempt retries
     // only the gaps instead of re-harvesting the whole chapter
     await mkdir(dir, { recursive: true });
-    const tmpIndex = `${indexFile}.tmp`;
-    await writeFile(
-      tmpIndex,
-      JSON.stringify(
-        { chapter: meta.chapter, group: meta.group, total: meta.pages, fetchedAt: Date.now(), pages },
-        null,
-        1,
-      ),
-    );
-    await rename(tmpIndex, indexFile);
+    const saveIndex = async () => {
+      const tmpIndex = `${indexFile}.tmp`;
+      await writeFile(
+        tmpIndex,
+        JSON.stringify(
+          { chapter: meta.chapter, group: meta.group, total: meta.pages, fetchedAt: Date.now(), pages },
+          null,
+          1,
+        ),
+      );
+      await rename(tmpIndex, indexFile);
+    };
+    await saveIndex();
 
     const got = Object.keys(pages).length;
     const missing = [];
@@ -671,7 +674,30 @@ async function downloadChapter(url, opts, dest = null) {
       return false;
     }
 
-    const failures = await downloadAll(pages, dir, harvested.headers || new Map());
+    let failures = await downloadAll(pages, dir, harvested.headers || new Map());
+    if (failures.length) {
+      // cached CDN URLs expire (hosts rotate or go NXDOMAIN). Re-read just the
+      // failed panels from a fresh reader document and retry once.
+      for (const f of failures) delete pages[String(f.num)];
+      console.log(`  refreshing ${failures.length} stale page URL(s) from the reader...`);
+      try {
+        await page.reload({ waitUntil: "domcontentloaded", timeout: 90_000 });
+        await page.waitForSelector("main.rpage-main .rpage-page", { timeout: 60_000 }).catch(() => {});
+        const refreshed = await harvestUrls(page, meta.pages, pages);
+        if (!refreshed.failed) Object.assign(pages, refreshed.pages);
+      } catch (err) {
+        console.error(`  URL refresh failed: ${err.message}`);
+      }
+      await saveIndex();
+      const gaps = [];
+      for (let n = 1; n <= meta.pages; n++) if (!pages[n]) gaps.push(n);
+      if (gaps.length) {
+        console.error(`  ${gaps.length} page URL(s) still missing after refresh: ${gaps.join(", ")}`);
+        emit({ type: "chapterPartial", number: meta.chapter, missing: gaps.length, total: meta.pages });
+        return false;
+      }
+      failures = await downloadAll(pages, dir, new Map());
+    }
     if (failures.length) {
       console.error(`  ${failures.length} download(s) failed:`);
       for (const f of failures.slice(0, 5)) console.error(`    page ${f.num}: ${f.err}`);
