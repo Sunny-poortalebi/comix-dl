@@ -137,6 +137,7 @@ function stopRun() {
 ipcMain.handle("start", async (_e, cfg) => {
   if (child) return { error: "a run is already active" };
   if (statusCheckRunning) return { error: "metadata refresh in progress — try again in a moment" };
+  if (epubRunning) return { error: "EPUB build in progress — try again in a moment" };
   if (!cfg.url || !/^https?:\/\//.test(cfg.url)) return { error: "paste a comix.to title URL" };
 
   const out = cfg.out || path.join(app.getPath("downloads"), "comix-dl");
@@ -341,6 +342,7 @@ function runChildCapture(args) {
 }
 
 let statusCheckRunning = false;
+let epubRunning = false;
 
 async function fetchStatuses(urls) {
   if (!urls.length) return [];
@@ -463,6 +465,44 @@ ipcMain.handle("library:ack", (_e, key) => {
     saveLibrary(lib);
   }
   return lib;
+});
+
+// build an EPUB from the chapters that completed (failed folders are skipped)
+ipcMain.handle("epub:build", async (_e, dir, maxMb) => {
+  if (child) return { error: "a download is running — try again when it finishes" };
+  if (epubRunning) return { error: "an EPUB build is already running" };
+  if (!dir || !fs.existsSync(dir)) return { error: "no completed chapters to build" };
+  epubRunning = true;
+  try {
+    return await new Promise((resolve) => {
+      const p = spawn(
+        process.execPath,
+        [path.join(ROOT, "comix-epub.mjs"), dir, "--max-mb", String(maxMb || 300), "--progress"],
+        { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } },
+      );
+      let buf = "";
+      const onData = (d) => {
+        buf += d.toString();
+        const lines = buf.split("\n");
+        buf = lines.pop();
+        for (const line of lines) {
+          if (line.startsWith("@@P ")) {
+            try {
+              send(JSON.parse(line.slice(4)));
+            } catch {}
+          } else if (line.trim()) {
+            send({ type: "log", line, err: false });
+          }
+        }
+      };
+      p.stdout.on("data", onData);
+      p.stderr.on("data", onData);
+      p.on("error", (err) => resolve({ error: err.message }));
+      p.on("exit", (code) => resolve({ code }));
+    });
+  } finally {
+    epubRunning = false;
+  }
 });
 
 ipcMain.handle("library:check-one", async (_e, key) => {

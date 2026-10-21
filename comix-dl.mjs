@@ -75,7 +75,8 @@ const capture = (err, tags = {}, extra = {}) => {
 // --progress turns stdout into NDJSON events ("@@P {...}") for the desktop app
 let PROGRESS = false;
 const emit = (ev) => {
-  if (PROGRESS) process.stdout.write(`@@P ${JSON.stringify(ev)}\n`);
+  // leading newline: progress lines use "\r" and would otherwise swallow the event
+  if (PROGRESS) process.stdout.write(`\n@@P ${JSON.stringify(ev)}\n`);
 };
 
 function parseArgs(argv) {
@@ -1086,18 +1087,16 @@ async function downloadSeries(titleUrl, opts) {
   let exitOk = failed.length === 0;
   if (failed.length) {
     console.error(`  ${failed.length}/${limited.length} chapter(s) failed: ${failed.map((r) => r.number).join(", ").slice(0, 400)}`);
-    console.error(`  successful chapters are kept; rerun the same title to retry only these.`);
+    console.error(`  nothing was deleted — rerun this title to retry only these, or build an EPUB`);
+    console.error(`  from the completed chapters with: node comix-epub.mjs "${seriesDir}" --max-mb ${opts.maxMb}`);
     opts.exitCode = doneCount > 0 ? 2 : 1;
   } else {
     opts.exitCode = 0;
   }
 
-  if (opts.epub && doneCount > 0) {
-    console.log(
-      failed.length
-        ? `  building epub from ${doneCount}/${limited.length} chapters (missing ${failed.length})...`
-        : "  building epub...",
-    );
+  // a partial book is an explicit choice, never an automatic result
+  if (opts.epub && !failed.length) {
+    console.log("  building epub...");
     emit({ type: "epubStart" });
     const res = spawnSync(
       process.execPath,

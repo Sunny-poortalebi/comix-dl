@@ -19,7 +19,8 @@ import crypto from "node:crypto";
 
 let PROGRESS = false;
 const emit = (ev) => {
-  if (PROGRESS) process.stdout.write(`@@P ${JSON.stringify(ev)}\n`);
+  // leading newline: progress lines use "\r" and would otherwise swallow the event
+  if (PROGRESS) process.stdout.write(`\n@@P ${JSON.stringify(ev)}\n`);
 };
 
 // --- Sentry (optional): DSN from SENTRY_DSN or ~/.comix-dl/sentry.json

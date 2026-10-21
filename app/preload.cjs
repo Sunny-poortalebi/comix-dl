@@ -19,5 +19,6 @@ contextBridge.exposeInMainWorld("api", {
   libraryAck: (key) => ipcRenderer.invoke("library:ack", key),
   libraryResolve: () => ipcRenderer.invoke("library:resolve"),
   libraryCovers: () => ipcRenderer.invoke("library:covers"),
+  buildEpub: (dir, maxMb) => ipcRenderer.invoke("epub:build", dir, maxMb),
   onLibraryChanged: (cb) => ipcRenderer.on("libraryChanged", () => cb()),
 });

@@ -13,6 +13,7 @@ const els = {
   url: $("url"), group: $("group"), limit: $("limit"), maxMb: $("maxMb"), out: $("out"),
   noEpub: $("noEpub"), start: $("start"), stop: $("stop"), pickOut: $("pickOut"),
   openOut: $("openOut"), openEpub: $("openEpub"), clearLog: $("clearLog"),
+  retryFailed: $("retryFailed"), buildEpub: $("buildEpub"),
   status: $("status"), seriesName: $("seriesName"), runCount: $("runCount"),
   overallFill: $("overallFill"), current: $("current"), pageFill: $("pageFill"),
   epubRow: $("epubRow"), epubFill: $("epubFill"), epubText: $("epubText"),
@@ -158,12 +159,17 @@ function onEvent(ev) {
       st.running = false;
       els.start.disabled = false;
       els.stop.disabled = true;
+      els.retryFailed.hidden = true;
+      els.buildEpub.hidden = true;
       if (ev.code === 0) {
         setStatus("done", "done");
         els.current.textContent = "all done";
       } else if (ev.code === 2) {
         setStatus("partial", "partial");
-        els.current.textContent = `finished — ${st.failedCount} chapter(s) failed (rerun to retry)`;
+        els.current.textContent = `finished — ${st.failedCount} chapter(s) failed`;
+        els.retryFailed.textContent = `retry failed (${st.failedCount})`;
+        els.retryFailed.hidden = false;
+        els.buildEpub.hidden = false;
       } else {
         setStatus("failed", "failed");
         els.current.textContent = `exited with code ${ev.code}`;
@@ -636,7 +642,9 @@ async function start() {
     return;
   }
   st.running = true;
-  st.done = 0; st.failed = 0; st.queued = 0; st.current = null; st.epubPath = null;
+  st.done = 0; st.failed = 0; st.failedCount = 0; st.queued = 0; st.current = null; st.epubPath = null;
+  els.retryFailed.hidden = true;
+  els.buildEpub.hidden = true;
   st.rows.clear();
   els.chapters.innerHTML = "";
   els.epubRow.hidden = true;
@@ -652,6 +660,19 @@ async function start() {
 
 els.start.addEventListener("click", start);
 els.stop.addEventListener("click", () => window.api.stop());
+els.retryFailed.addEventListener("click", () => {
+  if (!st.running) start();
+});
+els.buildEpub.addEventListener("click", async () => {
+  if (st.running) return;
+  if (!st.outDir) return log("no output folder to build", true);
+  els.buildEpub.disabled = true;
+  log("building EPUB from the chapters that completed…");
+  const res = await window.api.buildEpub(st.outDir, Number(els.maxMb.value) || 300);
+  els.buildEpub.disabled = false;
+  if (res?.error) return log(res.error, true);
+  if (res?.code !== 0) log(`EPUB build failed (exit ${res?.code})`, true);
+});
 els.tabDownload.addEventListener("click", () => showView("download"));
 els.tabLibrary.addEventListener("click", () => showView("library"));
 document.querySelectorAll(".chip[data-filter]").forEach((c) =>
