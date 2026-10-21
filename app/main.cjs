@@ -137,7 +137,6 @@ function stopRun() {
 ipcMain.handle("start", async (_e, cfg) => {
   if (child) return { error: "a run is already active" };
   if (statusCheckRunning) return { error: "metadata refresh in progress — try again in a moment" };
-  if (groupRunning) return { error: "group analysis in progress — try again in a moment" };
   if (!cfg.url || !/^https?:\/\//.test(cfg.url)) return { error: "paste a comix.to title URL" };
 
   const out = cfg.out || path.join(app.getPath("downloads"), "comix-dl");
@@ -148,7 +147,7 @@ ipcMain.handle("start", async (_e, cfg) => {
     "--series",
     cfg.url,
     "--group",
-    cfg.group ?? "Violet Scans",
+    cfg.group || "Violet Scans",
     "--max-mb",
     String(cfg.maxMb || 300),
     "--progress",
@@ -301,7 +300,7 @@ ipcMain.handle("library:track", async (_e, url, name, cover) => {
 
 ipcMain.handle("library:search", async (_e, query) => {
   if (child) return { error: "a download is running — try again when it finishes" };
-  if (statusCheckRunning || groupRunning) return { error: "status check is running — try again in a moment" };
+  if (statusCheckRunning) return { error: "status check is running — try again in a moment" };
   const q = String(query || "").trim();
   if (!q) return { error: "type a title to search" };
   const events = await runChildCapture([path.join(ROOT, "comix-dl.mjs"), "--progress", "--search", q]);
@@ -342,7 +341,6 @@ function runChildCapture(args) {
 }
 
 let statusCheckRunning = false;
-let groupRunning = false;
 
 async function fetchStatuses(urls) {
   if (!urls.length) return [];
@@ -378,7 +376,7 @@ async function applyStatuses(events) {
 
 // backfill covers for entries that predate cover scraping (also refreshes status)
 ipcMain.handle("library:covers", async () => {
-  if (child || statusCheckRunning || groupRunning) return { error: "busy — try again in a moment" };
+  if (child || statusCheckRunning) return { error: "busy — try again in a moment" };
   const lib = loadLibrary();
   const need = [
     ...new Set(
@@ -426,7 +424,7 @@ function matchTitle(name, results) {
 }
 
 ipcMain.handle("library:resolve", async () => {
-  if (child || statusCheckRunning || groupRunning) return { error: "busy — try again in a moment" };
+  if (child || statusCheckRunning) return { error: "busy — try again in a moment" };
   const lib = loadLibrary();
   const missing = Object.values(lib.titles).filter((t) => !t.url && t.series);
   if (!missing.length) return lib;
@@ -467,28 +465,9 @@ ipcMain.handle("library:ack", (_e, key) => {
   return lib;
 });
 
-// enumerate a title's releases and rank scanlation groups (coverage + avg likes)
-ipcMain.handle("library:groups", async (_e, url, out) => {
-  if (child) return { error: "a download is running — try again when it finishes" };
-  if (statusCheckRunning || groupRunning) return { error: "another metadata job is running — try again in a moment" };
-  if (!url || !/^https?:\/\/comix\.to\/title\//.test(url)) return { error: "no comix.to title URL for this entry" };
-  groupRunning = true;
-  try {
-    const outRoot = out || path.join(app.getPath("downloads"), "comix-dl");
-    const args = [path.join(ROOT, "comix-dl.mjs"), "--progress", "--groups", url, "--out", outRoot];
-    const events = await runChildCapture(args);
-    const hit = events.find((ev) => ev.type === "groups");
-    if (!hit) return { error: "group analysis failed" };
-    if (hit.error) return { error: hit.error };
-    return hit;
-  } finally {
-    groupRunning = false;
-  }
-});
-
 ipcMain.handle("library:check-one", async (_e, key) => {
   if (child) return { error: "a download is running — try again when it finishes" };
-  if (statusCheckRunning || groupRunning) return { error: "status check already running" };
+  if (statusCheckRunning) return { error: "status check already running" };
   const lib = loadLibrary();
   const t = lib.titles[key];
   if (!t?.url) return { error: "no comix URL for this title" };

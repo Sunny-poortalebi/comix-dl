@@ -15,7 +15,7 @@ Download a manga series from comix.to as images, then pack it into a single EPUB
 - **Per-panel recovery** — missing URLs are re-attempted individually (scroll into view, poll, viewport cycling), not by re-harvesting the chapter. Small gaps skip the full sweep entirely.
 - **EPUB output** — one EPUB3 book with `nav.xhtml` + `toc.ncx`, pages re-encoded to WebP under a size budget (default 300 MB) with per-page adaptive quality.
 - **Desktop app** — Electron window with per-chapter status, live harvest/download progress, EPUB progress, stop/resume.
-- **Library** — persistent history of downloaded titles (`~/.comix-dl/library.json`) with a read checkbox (read / to-read lists), 1–5 star scores, chapter counts and last-run dates. Existing output folders can be imported with “add folder”. Track titles by name (searches comix.to, including all content ratings: safe → pornographic) or URL without downloading; “check status” pulls comix's own status (RELEASING / HIATUS / FINISHED / …) and finished titles move into the to-read list automatically. Every entry has a **download** button that switches to the download view, prefills the title URL and lists its scanlation groups ranked by **chapter coverage and average likes per release** (missing chapters cost more than low likes; the top pick is starred and preselected).
+- **Library** — persistent history of downloaded titles (`~/.comix-dl/library.json`) with a read checkbox (read / to-read lists), 1–5 star scores, chapter counts and last-run dates. Existing output folders can be imported with “add folder”. Track titles by name (searches comix.to, including all content ratings: safe → pornographic) or URL without downloading; “check status” pulls comix's own status (RELEASING / HIATUS / FINISHED / …) and finished titles move into the to-read list automatically.
 - **Optional Sentry** — error reporting for the app, CLI and EPUB builder (disabled unless a DSN is configured).
 
 ## Requirements
@@ -53,12 +53,9 @@ node comix-dl.mjs --series https://comix.to/title/<slug> --group "Violet Scans" 
 
 # EPUB only, from an existing folder
 node comix-epub.mjs "The Perks of Being a Villainess" --max-mb 300
-
-# rank scanlation groups for a title (coverage + average likes)
-node comix-dl.mjs --groups https://comix.to/title/<slug> --progress
 ```
 
-Options: `--out DIR`, `--limit N`, `--group NAME`, `--max-mb N`, `--no-epub`, `--groups URL`, `--progress` (NDJSON events for the app), `--self-test`.
+Options: `--out DIR`, `--limit N`, `--group NAME`, `--max-mb N`, `--no-epub`, `--progress` (NDJSON events for the app), `--self-test`.
 
 ## How it works
 

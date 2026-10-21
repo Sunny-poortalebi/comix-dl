@@ -46,11 +46,6 @@ body {
   border-radius: 7px; padding: 5px 8px; font: inherit; font-size: 12px;
 }
 .sortsel:focus { outline: none; border-color: var(--accent); }
-#group {
-  background: var(--bg); color: var(--fg); border: 1px solid var(--border);
-  border-radius: 7px; padding: 6px 9px; font: inherit; font-size: 13px; width: 100%;
-}
-#group:focus { outline: none; border-color: var(--accent); }
 .rowactions { display: flex; gap: 6px; justify-content: flex-end; }
 button.del { color: var(--error); border-color: transparent; padding: 2px 6px; }
 button.del:hover { border-color: var(--error); }
