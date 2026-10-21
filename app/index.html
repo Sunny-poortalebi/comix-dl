@@ -28,9 +28,12 @@
       <label for="url">Title URL</label>
       <input id="url" placeholder="https://comix.to/title/…" spellcheck="false" />
     </div>
-    <div class="field">
+    <div class="field wide">
       <label for="group">Preferred group</label>
-      <input id="group" value="Violet Scans" />
+      <select id="group">
+        <option value="Violet Scans">Violet Scans</option>
+        <option value="">Newest release per chapter</option>
+      </select>
     </div>
     <div class="field narrow">
       <label for="limit">Chapter limit <span class="hint">0 = all</span></label>

@@ -93,10 +93,11 @@ function parseArgs(argv) {
     else if (a === "--self-test") opts.selfTest = true;
     else if (a === "--status-check") (opts.statusChecks ||= []).push(argv[++i]);
     else if (a === "--search") opts.search = argv[++i];
+    else if (a === "--groups") opts.groupsUrl = argv[++i];
     else if (a.startsWith("--")) fail(`unknown option: ${a}`);
     else urls.push(a);
   }
-  if (!opts.series && !opts.selfTest && !opts.statusChecks?.length && !opts.search && urls.length === 0)
+  if (!opts.series && !opts.selfTest && !opts.statusChecks?.length && !opts.search && !opts.groupsUrl && urls.length === 0)
     fail("usage: node comix-dl.mjs <chapter-url> [...] | --series <title-url> [--group NAME] [--out DIR] [--no-epub] [--max-mb N]");
   return { urls, opts };
 }
@@ -798,6 +799,7 @@ function parseReleaseRow(r) {
   return {
     number: String(parseFloat(m[1])).replace(/\.0$/, ""),
     group: m[2].trim(),
+    likes: Number((parts[1] || "").replace(/[^\d]/g, "")) || 0,
     age: ageSeconds(parts[parts.length - 1] || ""),
     url: r.href,
   };
@@ -968,6 +970,76 @@ async function downloadSeries(titleUrl, opts) {
   return ok;
 }
 
+/** Enumerate releases and rank scanlation groups by coverage + average likes. */
+async function groupStats(titleUrl, opts) {
+  const { browser, page, stopHeartbeat } = await openChapter(titleUrl);
+  try {
+    const series = (await page.title()).split("·")[0].replace(/\s*[-–|].*$/, "").trim();
+    const seriesDir = path.join(opts.out, series.replace(/[\\/:*?"<>|]/g, ""));
+    const cachePath = path.join(seriesDir, "releases.json");
+
+    let rows = null;
+    if (existsSync(cachePath)) {
+      try {
+        const cached = JSON.parse(await readFile(cachePath, "utf8"));
+        if (cached.fetchedAt && Date.now() - cached.fetchedAt < 14 * 864e5 && cached.rows?.length) rows = cached.rows;
+      } catch {}
+    }
+    if (!rows) {
+      rows = await enumerateReleases(page);
+      await mkdir(seriesDir, { recursive: true });
+      await writeFile(cachePath, JSON.stringify({ fetchedAt: Date.now(), rows }, null, 1));
+    }
+
+    const rels = rows.map(parseReleaseRow).filter(Boolean);
+    const totalChapters = new Set(rels.map((r) => r.number)).size;
+    const byGroup = new Map();
+    for (const r of rels) {
+      let g = byGroup.get(r.group);
+      if (!g) {
+        g = { name: r.group, chapters: new Set(), likes: [] };
+        byGroup.set(r.group, g);
+      }
+      g.chapters.add(r.number);
+      g.likes.push(r.likes);
+    }
+    const avg = (xs) => (xs.length ? xs.reduce((a, b) => a + b, 0) / xs.length : 0);
+    const maxAvg = Math.max(...[...byGroup.values()].map((g) => avg(g.likes)), 1);
+    const round = (n, d = 1) => Math.round(n * 10 ** d) / 10 ** d;
+    const groups = [...byGroup.values()]
+      .map((g) => {
+        const avgLikes = avg(g.likes);
+        const coverage = totalChapters ? g.chapters.size / totalChapters : 0;
+        return {
+          name: g.name,
+          chapters: g.chapters.size,
+          releases: g.likes.length,
+          avgLikes: round(avgLikes),
+          coverage: round(coverage, 3),
+          score: round(0.65 * coverage + 0.35 * (avgLikes / maxAvg), 3),
+        };
+      })
+      .sort((a, b) => b.score - a.score || b.chapters - a.chapters);
+
+    const recommendation = groups[0]?.name || null;
+    console.log(
+      `  ${series}: ${totalChapters} chapters · ` +
+        groups.slice(0, 4).map((g) => `${g.name} ${Math.round(g.coverage * 100)}%`).join(", "),
+    );
+    emit({ type: "groups", url: titleUrl, series, totalChapters, groups, recommendation });
+    return true;
+  } catch (err) {
+    capture(err, { stage: "groups" });
+    console.error(`  group analysis failed: ${err.message}`);
+    emit({ type: "groups", url: titleUrl, groups: [], recommendation: null, error: err.message });
+    return false;
+  } finally {
+    stopHeartbeat();
+    await page.close().catch(() => {});
+    browser.disconnect();
+  }
+}
+
 /** Search comix.to through its own search box and return title results. */
 async function searchTitles(query) {
   const { browser, page, stopHeartbeat } = await openChapter("https://comix.to/");
@@ -1096,6 +1168,11 @@ try {
   if (opts.selfTest) {
     runSelfTest();
     process.exit(0);
+  }
+  if (opts.groupsUrl) {
+    const ok = await groupStats(opts.groupsUrl, opts);
+    if (SENTRY_ON) await Sentry.flush(3000);
+    process.exit(ok ? 0 : 1);
   }
   if (opts.search) {
     const found = await searchTitles(opts.search);

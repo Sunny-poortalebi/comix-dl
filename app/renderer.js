@@ -237,6 +237,43 @@ function fmtDate(ts) {
   }
 }
 
+// download CTA from the library: prefill the URL and offer ranked scanlation groups
+async function downloadFromLibrary(t) {
+  if (!t.url) return log("this title has no comix URL yet", true);
+  showView("download");
+  els.url.value = t.url;
+  els.start.focus();
+  log(`preparing ${t.series || t.key} — analysing scanlation groups…`);
+  const outRoot = t.outDir ? t.outDir.replace(/[\\/][^\\/]+$/, "") : null;
+  let res = await window.api.libraryGroups(t.url, outRoot);
+  // a library refresh may hold the browser for a few seconds — wait it out
+  if (res?.error && /metadata job|metadata refresh|status check/i.test(res.error)) {
+    log("waiting for the library refresh to finish…");
+    for (let i = 0; i < 80 && res?.error; i++) {
+      await new Promise((r) => setTimeout(r, 1500));
+      res = await window.api.libraryGroups(t.url, outRoot);
+    }
+  }
+  if (res?.error) return log(res.error, true);
+  populateGroups(res);
+}
+
+function populateGroups(res) {
+  const sel = els.group;
+  sel.innerHTML = "";
+  sel.add(new Option("Newest release per chapter", ""));
+  for (const g of res.groups || []) {
+    const pct = Math.round(g.coverage * 100);
+    const label = `${g.name} — ${pct}% of chapters · ~${g.avgLikes} likes`;
+    sel.add(new Option(g.name === res.recommendation ? `★ ${label} (recommended)` : label, g.name));
+  }
+  sel.value = res.recommendation || "";
+  log(
+    `recommended group: ${res.recommendation || "none"} ` +
+      `(${res.totalChapters} chapters compared) — change it above before starting`,
+  );
+}
+
 function libraryRow(t) {
   const row = document.createElement("div");
   row.className = "librow";
@@ -344,6 +381,17 @@ function libraryRow(t) {
 
   const actions = document.createElement("span");
   actions.className = "rowactions";
+  if (t.url) {
+    const dl = document.createElement("button");
+    dl.className = "ghost small";
+    dl.textContent = "⇣";
+    dl.title = "download chapters — opens the download view with group options";
+    dl.addEventListener("click", (e) => {
+      e.stopPropagation();
+      downloadFromLibrary(t);
+    });
+    actions.append(dl);
+  }
   // any title with a URL can be re-checked on demand
   if (t.url) {
     const refresh = document.createElement("button");
@@ -484,6 +532,14 @@ function coverCard(t) {
 
   const actions = document.createElement("div");
   actions.className = "cardactions";
+  if (t.url) {
+    const dl = document.createElement("button");
+    dl.className = "ghost small";
+    dl.textContent = "⇣";
+    dl.title = "download chapters — opens the download view with group options";
+    dl.addEventListener("click", () => downloadFromLibrary(t));
+    actions.appendChild(dl);
+  }
   if (t.url) {
     const refresh = document.createElement("button");
     refresh.className = "ghost small";
@@ -726,7 +782,9 @@ window.api.onProgress(onEvent);
 window.api.onLibraryChanged(() => loadLibrary());
 window.api.onAutostart((cfg) => {
   els.url.value = cfg.url || "";
-  els.group.value = cfg.group || "Violet Scans";
+  const g = cfg.group || "Violet Scans";
+  if (![...els.group.options].some((o) => o.value === g)) els.group.add(new Option(g, g));
+  els.group.value = g;
   els.limit.value = cfg.limit ?? 0;
   els.maxMb.value = cfg.maxMb ?? 300;
   els.noEpub.checked = !!cfg.noEpub;
