@@ -17,6 +17,7 @@ contextBridge.exposeInMainWorld("api", {
   librarySearch: (query) => ipcRenderer.invoke("library:search", query),
   libraryCheckOne: (key) => ipcRenderer.invoke("library:check-one", key),
   libraryAck: (key) => ipcRenderer.invoke("library:ack", key),
+  libraryResolve: () => ipcRenderer.invoke("library:resolve"),
   libraryCovers: () => ipcRenderer.invoke("library:covers"),
   onLibraryChanged: (cb) => ipcRenderer.on("libraryChanged", () => cb()),
 });

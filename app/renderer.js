@@ -170,6 +170,7 @@ const lib = {
   sort: localStorage.getItem("libSort") || "lastRun",
   view: localStorage.getItem("libView") || "list",
   coverFetchStarted: false,
+  resolveStarted: false,
 };
 
 function showView(name) {
@@ -178,7 +179,21 @@ function showView(name) {
   els.viewLibrary.hidden = download;
   els.tabDownload.classList.toggle("active", download);
   els.tabLibrary.classList.toggle("active", !download);
-  if (!download) loadLibrary();
+  if (!download) loadLibrary().then(maybeResolveLinks);
+}
+
+// imported folders have no URL; link them on first visit so every feature works
+async function maybeResolveLinks() {
+  if (lib.resolveStarted || !lib.data) return;
+  const missing = Object.values(lib.data.titles || {}).filter((t) => !t.url && t.series);
+  if (!missing.length) return;
+  lib.resolveStarted = true;
+  log(`linking ${missing.length} imported title(s) to comix…`);
+  const res = await window.api.libraryResolve();
+  if (res?.error) return log(res.error, true);
+  lib.data = res;
+  renderLibrary();
+  log("title linking complete");
 }
 
 function fmtDate(ts) {

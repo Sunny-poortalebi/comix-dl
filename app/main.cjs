@@ -390,6 +390,52 @@ ipcMain.handle("library:covers", async () => {
   }
 });
 
+// imported folders have no comix URL, which disables every title-level feature;
+// resolve them by exact-name search on comix, then fetch their metadata
+function matchTitle(name, results) {
+  const norm = (s) => String(s || "").toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const target = norm(name);
+  if (!target) return null;
+  const exact = results.find((r) => norm(r.title) === target);
+  if (exact) return exact;
+  const contains = results.filter((r) => norm(r.title).includes(target) || target.includes(norm(r.title)));
+  if (contains.length === 1) return contains[0];
+  if (results.length === 1) return results[0];
+  return null;
+}
+
+ipcMain.handle("library:resolve", async () => {
+  if (child || statusCheckRunning) return { error: "busy — try again in a moment" };
+  const lib = loadLibrary();
+  const missing = Object.values(lib.titles).filter((t) => !t.url && t.series);
+  if (!missing.length) return lib;
+
+  statusCheckRunning = true;
+  try {
+    const resolved = [];
+    for (const t of missing) {
+      const events = await runChildCapture([path.join(ROOT, "comix-dl.mjs"), "--progress", "--search", t.series]);
+      const sr = events.find((e) => e.type === "searchResults");
+      const pick = matchTitle(t.series, sr?.results || []);
+      if (!pick) continue;
+      const fresh = loadLibrary();
+      const entry = Object.entries(fresh.titles).find(([, x]) => x.series === t.series && !x.url);
+      if (!entry) continue;
+      const [key, cur] = entry;
+      fresh.titles[key] = { ...cur, url: pick.url, ...(pick.thumb ? { cover: pick.thumb } : {}) };
+      saveLibrary(fresh);
+      resolved.push(pick.url);
+    }
+    if (!resolved.length) return loadLibrary();
+    const events = await fetchStatuses([...new Set(resolved)]);
+    const finalLib = await applyStatuses(events);
+    send({ type: "libraryChanged" });
+    return finalLib;
+  } finally {
+    statusCheckRunning = false;
+  }
+});
+
 ipcMain.handle("library:ack", (_e, key) => {
   const lib = loadLibrary();
   if (lib.titles[key]) {
