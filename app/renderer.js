@@ -224,11 +224,16 @@ function chapterLabel(t) {
   return `${t.chaptersDone ?? 0}/${available || 0}`;
 }
 
+// most relevant date: download run, else last status check, else when added
+const activityAt = (t) => t.lastRunAt || t.checkedAt || t.addedAt || 0;
+
 function fmtDate(ts) {
+  const n = Number(ts);
+  if (!Number.isFinite(n) || n <= 0) return "—";
   try {
-    return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+    return new Date(n).toLocaleDateString(undefined, { month: "short", day: "numeric" });
   } catch {
-    return "";
+    return "—";
   }
 }
 
@@ -311,7 +316,8 @@ function libraryRow(t) {
 
   const date = document.createElement("span");
   date.className = "meta";
-  date.textContent = fmtDate(t.lastRunAt);
+  date.textContent = fmtDate(activityAt(t));
+  date.title = t.lastRunAt ? "last download run" : t.checkedAt ? "last status check" : "added to library";
 
   const open = document.createElement("button");
   open.className = "ghost small";
@@ -366,7 +372,7 @@ function renderLibrary() {
   if (!data) return;
   const isFinished = (t) => (t.status || "").toUpperCase() === "FINISHED";
   const sorters = {
-    lastRun: (a, b) => (b.lastRunAt || 0) - (a.lastRunAt || 0),
+    lastRun: (a, b) => activityAt(b) - activityAt(a),
     addedDesc: (a, b) => (b.addedAt || 0) - (a.addedAt || 0),
     addedAsc: (a, b) => (a.addedAt || 0) - (b.addedAt || 0),
     scoreDesc: (a, b) => (b.score ?? -1) - (a.score ?? -1) || (b.addedAt || 0) - (a.addedAt || 0),
