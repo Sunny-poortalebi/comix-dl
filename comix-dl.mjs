@@ -512,6 +512,24 @@ async function harvestUrls(page, totalPages, known = {}) {
 
 const EXT_BY_TYPE = { "image/webp": "webp", "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif" };
 
+const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
+
+function retryAfterMs(value) {
+  if (!value) return null;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return Math.max(0, seconds * 1000);
+  const at = Date.parse(value);
+  return Number.isFinite(at) ? Math.max(0, at - Date.now()) : null;
+}
+
+// exponential backoff with jitter; incident responses (503/429) can dictate the wait
+function pageBackoff(attempt, err) {
+  const advised = retryAfterMs(err.retryAfter);
+  if (advised != null) return Math.min(advised, 30_000);
+  const base = Math.min(800 * 2 ** (attempt - 1), 8000);
+  return Math.round(base / 2 + Math.random() * (base / 2));
+}
+
 async function downloadAll(pages, dir, headers = new Map()) {
   await mkdir(dir, { recursive: true });
   const entries = Object.entries(pages).sort((a, b) => a[0] - b[0]);
@@ -522,13 +540,17 @@ async function downloadAll(pages, dir, headers = new Map()) {
   }
   let done = 0;
   const failures = [];
+  const attempts = 5;
+  let cooldownUntil = 0;
 
   async function one([num, url]) {
     if (existing.has(Number(num))) {
       done++;
       return;
     }
-    for (let attempt = 1; attempt <= 3; attempt++) {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      const pause = cooldownUntil - Date.now();
+      if (pause > 0) await sleepMs(pause);
       try {
         // retries reuse the exact browser headers (the CDN sometimes enforces them)
         const h = attempt > 1 ? headers.get(url) : null;
@@ -544,7 +566,12 @@ async function downloadAll(pages, dir, headers = new Map()) {
               }
             : {}),
         });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        if (!res.ok) {
+          const e = new Error(`HTTP ${res.status}`);
+          e.status = res.status;
+          e.retryAfter = res.headers.get("retry-after");
+          throw e;
+        }
         const type = (res.headers.get("content-type") || "").split(";")[0];
         const ext = EXT_BY_TYPE[type] || "webp";
         const buf = Buffer.from(await res.arrayBuffer());
@@ -566,7 +593,16 @@ async function downloadAll(pages, dir, headers = new Map()) {
         emit({ type: "download", done, total: entries.length });
         return;
       } catch (err) {
-        if (attempt === 3) failures.push({ num, url, err: String(err) });
+        const status = err.status;
+        const retryable = !status || status === 408 || status === 429 || status >= 500;
+        if (!retryable || attempt === attempts) {
+          failures.push({ num, url, err: `${String(err)}${retryable ? ` (after ${attempts} attempts)` : ""}` });
+          return;
+        }
+        const wait = pageBackoff(attempt, err);
+        // 503/429 is load shedding: hold every worker back, not just this page
+        if (status === 503 || status === 429) cooldownUntil = Math.max(cooldownUntil, Date.now() + wait);
+        await sleepMs(wait);
       }
     }
   }
