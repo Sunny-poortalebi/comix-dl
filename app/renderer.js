@@ -180,16 +180,12 @@ function showView(name) {
   els.viewLibrary.hidden = download;
   els.tabDownload.classList.toggle("active", download);
   els.tabLibrary.classList.toggle("active", !download);
-  if (!download)
-    loadLibrary().then(async () => {
-      await maybeResolveLinks();
-      await backfillMetadata();
-    });
+  if (!download) loadLibrary();
 }
 
-// imported folders have no URL; link them on first visit so every feature works
-async function maybeResolveLinks() {
-  if (lib.resolveStarted || !lib.data) return;
+// imported folders have no URL; link them on demand so every feature works
+async function maybeResolveLinks(force = false) {
+  if (!lib.data || (lib.resolveStarted && !force)) return;
   const missing = Object.values(lib.data.titles || {}).filter((t) => !t.url && t.series);
   if (!missing.length) return;
   lib.resolveStarted = true;
@@ -201,9 +197,9 @@ async function maybeResolveLinks() {
   log("title linking complete");
 }
 
-// entries linked before latest-chapter support have no total; fetch it once
-async function backfillMetadata() {
-  if (lib.metaFetchStarted || !lib.data) return;
+// entries linked before latest-chapter support have no total; fetch on demand
+async function backfillMetadata(force = false) {
+  if (!lib.data || (lib.metaFetchStarted && !force)) return;
   const missing = Object.values(lib.data.titles || {}).filter(
     (t) => t.url && (t.latestChapter == null || !t.cover),
   );
@@ -671,7 +667,12 @@ els.libSort.addEventListener("change", () => {
   localStorage.setItem("libSort", lib.sort);
   renderLibrary();
 });
-els.libRefresh.addEventListener("click", loadLibrary);
+els.libRefresh.addEventListener("click", async () => {
+  await loadLibrary();
+  // explicit action: may open the browser to link titles / fetch metadata
+  await maybeResolveLinks(true);
+  await backfillMetadata(true);
+});
 els.libImport.addEventListener("click", async () => {
   const dir = await window.api.chooseOut();
   if (!dir) return;
