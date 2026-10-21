@@ -136,6 +136,7 @@ function stopRun() {
 
 ipcMain.handle("start", async (_e, cfg) => {
   if (child) return { error: "a run is already active" };
+  if (statusCheckRunning) return { error: "metadata refresh in progress — try again in a moment" };
   if (!cfg.url || !/^https?:\/\//.test(cfg.url)) return { error: "paste a comix.to title URL" };
 
   const out = cfg.out || path.join(app.getPath("downloads"), "comix-dl");
@@ -377,12 +378,30 @@ async function applyStatuses(events) {
 ipcMain.handle("library:covers", async () => {
   if (child || statusCheckRunning) return { error: "busy — try again in a moment" };
   const lib = loadLibrary();
-  const need = [...new Set(Object.values(lib.titles).filter((t) => t.url && !t.cover).map((t) => t.url))];
+  const need = [
+    ...new Set(
+      Object.values(lib.titles)
+        .filter((t) => t.url && (!t.cover || t.latestChapter == null))
+        .map((t) => t.url),
+    ),
+  ];
   if (!need.length) return lib;
   statusCheckRunning = true;
   try {
     const events = await fetchStatuses(need);
-    const fresh = await applyStatuses(events);
+    let fresh = await applyStatuses(events);
+    // one retry for URLs whose page load hiccuped (metadata still unknown)
+    const still = [
+      ...new Set(
+        Object.values(fresh.titles)
+          .filter((t) => need.includes(t.url) && t.latestChapter == null)
+          .map((t) => t.url),
+      ),
+    ];
+    if (still.length) {
+      const retry = await fetchStatuses(still);
+      fresh = await applyStatuses(retry);
+    }
     send({ type: "libraryChanged" });
     return fresh;
   } finally {

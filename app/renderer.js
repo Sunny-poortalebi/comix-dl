@@ -171,6 +171,7 @@ const lib = {
   view: localStorage.getItem("libView") || "list",
   coverFetchStarted: false,
   resolveStarted: false,
+  metaFetchStarted: false,
 };
 
 function showView(name) {
@@ -179,7 +180,11 @@ function showView(name) {
   els.viewLibrary.hidden = download;
   els.tabDownload.classList.toggle("active", download);
   els.tabLibrary.classList.toggle("active", !download);
-  if (!download) loadLibrary().then(maybeResolveLinks);
+  if (!download)
+    loadLibrary().then(async () => {
+      await maybeResolveLinks();
+      await backfillMetadata();
+    });
 }
 
 // imported folders have no URL; link them on first visit so every feature works
@@ -194,6 +199,29 @@ async function maybeResolveLinks() {
   lib.data = res;
   renderLibrary();
   log("title linking complete");
+}
+
+// entries linked before latest-chapter support have no total; fetch it once
+async function backfillMetadata() {
+  if (lib.metaFetchStarted || !lib.data) return;
+  const missing = Object.values(lib.data.titles || {}).filter(
+    (t) => t.url && (t.latestChapter == null || !t.cover),
+  );
+  if (!missing.length) return;
+  lib.metaFetchStarted = true;
+  log(`fetching metadata for ${missing.length} title(s)…`);
+  const res = await window.api.libraryCovers();
+  if (res?.error) return log(res.error, true);
+  lib.data = res;
+  renderLibrary();
+  log("metadata refresh complete");
+}
+
+// downloaded / available, where available is the latest chapter on comix
+// (the folder index only knows what was actually downloaded)
+function chapterLabel(t) {
+  const available = Math.max(Number(t.latestChapter) || 0, Number(t.chaptersTotal) || 0);
+  return `${t.chaptersDone ?? 0}/${available || 0}`;
 }
 
 function fmtDate(ts) {
@@ -278,7 +306,8 @@ function libraryRow(t) {
 
   const chapters = document.createElement("span");
   chapters.className = "meta";
-  chapters.textContent = `${t.chaptersDone ?? 0}/${t.chaptersTotal ?? 0}`;
+  chapters.textContent = chapterLabel(t);
+  chapters.title = "downloaded / available (latest chapter on comix)";
 
   const date = document.createElement("span");
   date.className = "meta";
@@ -366,17 +395,6 @@ function renderLibrary() {
 
   if (lib.view === "covers") {
     for (const t of entries) els.libBody.appendChild(coverCard(t));
-    // first time in cover view, fill in covers for older entries
-    if (!lib.coverFetchStarted && entries.some((t) => t.url && !t.cover)) {
-      lib.coverFetchStarted = true;
-      log("fetching covers for titles that have none…");
-      window.api.libraryCovers().then((res) => {
-        if (res && !res.error) {
-          lib.data = res;
-          renderLibrary();
-        }
-      });
-    }
   } else {
     for (const t of entries) els.libBody.appendChild(libraryRow(t));
   }
@@ -431,7 +449,8 @@ function coverCard(t) {
   }`;
   badge.textContent = t.status || "unchecked";
   const ch = document.createElement("span");
-  ch.textContent = `${t.chaptersDone ?? 0}/${t.chaptersTotal ?? 0}`;
+  ch.textContent = chapterLabel(t);
+  ch.title = "downloaded / available (latest chapter on comix)";
   meta.append(badge, ch);
   if (t.newChapter) {
     const nb = document.createElement("button");
