@@ -16,6 +16,7 @@ Download a manga series from comix.to as images, then pack it into a single EPUB
 - **Failure recovery** — transient CDN/connection errors retry with backoff (honoring `Retry-After`); chapters that still fail get a second, gentler pass (~45s cool-down, 2 workers, 8 attempts). Nothing is deleted: the run exits `2` (partial) without binding an incomplete book; rerunning retries only the failed chapters, or you can build an EPUB from the completed ones explicitly (app: “retry failed” / “build EPUB anyway”).
 - **EPUB output** — one EPUB3 book with `nav.xhtml` + `toc.ncx`, pages re-encoded to WebP under a size budget (default 300 MB) with per-page adaptive quality.
 - **Desktop app** — Electron window with per-chapter status, live harvest/download progress, EPUB progress, stop/resume.
+- **Background browser** — the automation browser launches without activation and is parked off-screen; downloads, searches and status checks never take focus. It only comes forward when a Cloudflare challenge needs a click, then parks again and returns focus to your previous app.
 - **Library** — persistent history of downloaded titles (`~/.comix-dl/library.json`) with a read checkbox (read / to-read lists), 1–5 star scores, chapter counts and last-run dates. Existing output folders can be imported with “add folder”. Track titles by name (searches comix.to, including all content ratings: safe → pornographic) or URL without downloading; “check status” pulls comix's own status (RELEASING / HIATUS / FINISHED / …) and finished titles move into the to-read list automatically.
 - **Optional Sentry** — error reporting for the app, CLI and EPUB builder (disabled unless a DSN is configured).
 
@@ -60,7 +61,7 @@ Options: `--out DIR`, `--limit N`, `--group NAME`, `--max-mb N`, `--no-epub`, `-
 
 ## How it works
 
-1. Opens the title page in a real Brave instance (persistent profile, `~/.comix-dl-profile`) and walks its chapter list with trusted input.
+1. Opens the title page in a real Brave instance (persistent profile, `~/.comix-dl-profile`) and walks its chapter list with trusted input. The window starts in the background and is parked off-screen; a Cloudflare challenge is the only time it comes forward.
 2. For each chapter, resolves every panel URL by driving the reader: pages are virtualized, so each page is brought into view and polled until its `<img>` gets a `src`. Network requests are monitored as a completeness cross-check.
 3. Downloads panels in a separate channel (6-way parallel `fetch`), validating image bytes rather than trusting content length.
 4. Encodes and packs the EPUB (`sharp` + `yazl`).

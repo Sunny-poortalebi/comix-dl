@@ -31,7 +31,7 @@
 
 import puppeteer from "puppeteer-core";
 import * as Sentry from "@sentry/node";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, execFileSync } from "node:child_process";
 import { mkdir, writeFile, readFile, readdir, stat, rename } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
@@ -46,6 +46,20 @@ const DEFAULT_BROWSER =
 const CHROME = process.env.COMIX_BROWSER || DEFAULT_BROWSER;
 const PROFILE = path.join(os.homedir(), ".comix-dl-profile");
 const DEBUG_PORT = 9333;
+
+// The automation window lives off-screen and is never focused. It must stay in
+// the "normal" (not minimized) state: a minimized/hidden page stops loading the
+// reader's lazy panel images, which is what harvesting depends on. macOS
+// clamps the window to a 40px sliver at the screen edge; it stays behind your
+// windows because the browser is launched in the background.
+const WINDOW_PARKED = { left: -2500, top: -2500, width: 1280, height: 900 };
+const WINDOW_VISIBLE = { left: 80, top: 80, width: 1280, height: 900 };
+
+// One connection and one tab for the whole CLI process. Reusing them avoids
+// creating (and focusing) a new tab for every chapter.
+let sharedBrowser = null;
+let sharedPage = null;
+const netListeners = new WeakMap();
 
 // --- Sentry (optional): DSN from SENTRY_DSN or ~/.comix-dl/sentry.json
 let SENTRY_ON = false;
@@ -106,32 +120,152 @@ function fail(msg) {
   throw new Error(msg);
 }
 
-/** Attach to an ordinary Chrome instance. We spawn the binary ourselves with
- *  only --remote-debugging-port, so the browser carries no automation flags
+/** /Applications/Brave Browser.app/... -> /Applications/Brave Browser.app */
+function macAppBundle(bin) {
+  if (process.platform !== "darwin") return null;
+  const m = /^(.*?\.app)\/Contents\/MacOS\//.exec(bin || "");
+  return m ? m[1] : null;
+}
+
+function browserAppName() {
+  const app = macAppBundle(CHROME);
+  return app ? path.basename(app, ".app") : null;
+}
+
+function frontmostApp() {
+  if (process.platform !== "darwin") return null;
+  try {
+    return execFileSync(
+      "osascript",
+      ["-e", 'tell application "System Events" to get name of first application process whose frontmost is true'],
+      { encoding: "utf8" },
+    ).trim();
+  } catch {
+    return null;
+  }
+}
+
+function activateApp(name) {
+  if (process.platform !== "darwin" || !name) return;
+  try {
+    execFileSync("osascript", ["-e", `tell application ${JSON.stringify(name)} to activate`], {
+      stdio: "ignore",
+    });
+  } catch {}
+}
+
+/** Activate this automation browser, not the user's normal Brave/Chrome
+ *  instance: find the process that owns the debugging port. */
+function activateBrowser() {
+  if (process.platform !== "darwin") return;
+  try {
+    const pid = execFileSync("lsof", ["-nP", `-iTCP:${DEBUG_PORT}`, "-sTCP:LISTEN", "-t"], {
+      encoding: "utf8",
+    })
+      .trim()
+      .split(/\s+/)[0];
+    if (pid) {
+      execFileSync(
+        "osascript",
+        ["-e", `tell application "System Events" to set frontmost of first process whose unix id is ${pid} to true`],
+        { stdio: "ignore" },
+      );
+      return;
+    }
+  } catch {}
+  activateApp(browserAppName());
+}
+
+async function setWindowBounds(page, bounds) {
+  const client = await page.createCDPSession();
+  try {
+    const { windowId } = await client.send("Browser.getWindowForTarget");
+    await client.send("Browser.setWindowBounds", {
+      windowId,
+      bounds: { ...bounds, windowState: "normal" },
+    });
+  } finally {
+    await client.detach().catch(() => {});
+  }
+}
+
+/** Move the automation window off-screen without minimizing it. Minimizing
+ *  makes document.visibilityState "hidden", and the reader then stops loading
+ *  the lazy panel images harvestUrls depends on. */
+async function parkWindow(page) {
+  await setWindowBounds(page, WINDOW_PARKED).catch(() => {});
+}
+
+/** Bring the window back only when the user has to act (Cloudflare). */
+async function surfaceWindow(page) {
+  await setWindowBounds(page, WINDOW_VISIBLE).catch(() => {});
+  await page.bringToFront().catch(() => {});
+  activateBrowser();
+}
+
+/** Wait for a challenge to clear, then put the browser back in the background
+ *  and return focus to whatever app the user was in before the interruption. */
+async function waitForUser(page, message, timeout, ready) {
+  console.log(message);
+  const previous = frontmostApp();
+  await surfaceWindow(page);
+  try {
+    return await page
+      .waitForFunction(ready, { timeout })
+      .then(() => true)
+      .catch(() => false);
+  } finally {
+    await parkWindow(page);
+    if (previous && previous !== browserAppName()) activateApp(previous);
+  }
+}
+
+/** Launch the automation browser without activation. On macOS `open -g` starts
+ *  the bundle in the background; spawning the binary directly makes Chromium
+ *  activate its app. `-n` is required so `--user-data-dir` is honored even when
+ *  the user's normal browser is already running. */
+function launchBrowser(args) {
+  const app = macAppBundle(CHROME);
+  if (app) {
+    spawn("open", ["-g", "-n", "-a", app, "--args", ...args], {
+      detached: true,
+      stdio: "ignore",
+    }).unref();
+    return;
+  }
+  spawn(CHROME, args, { detached: true, stdio: "ignore" }).unref();
+}
+
+/** Attach to an ordinary Chrome instance launched in the background with only
+ *  --remote-debugging-port, so the browser carries no automation flags
  *  (navigator.webdriver stays false) and Cloudflare treats it as normal Chrome.
  *  A running instance is reused; the browser stays open between runs so
  *  clearance cookies persist. */
 async function connectBrowser() {
+  if (sharedBrowser?.isConnected()) return sharedBrowser;
+  // a dropped connection leaves page handles unusable; start clean
+  sharedBrowser = null;
+  sharedPage = null;
   const opts = { browserURL: `http://127.0.0.1:${DEBUG_PORT}`, protocolTimeout: 300_000 };
   try {
-    return await puppeteer.connect(opts);
+    sharedBrowser = await puppeteer.connect(opts);
+    return sharedBrowser;
   } catch {}
-  spawn(
-    CHROME,
-    [
-      `--remote-debugging-port=${DEBUG_PORT}`,
-      `--user-data-dir=${PROFILE}`,
-      "--no-first-run",
-      "--no-default-browser-check",
-      "--disable-background-timer-throttling",
-      "--disable-backgrounding-occluded-windows",
-      "--disable-renderer-backgrounding",
-    ],
-    { detached: true, stdio: "ignore" },
-  ).unref();
+  launchBrowser([
+    `--remote-debugging-port=${DEBUG_PORT}`,
+    `--user-data-dir=${PROFILE}`,
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-background-timer-throttling",
+    "--disable-backgrounding-occluded-windows",
+    "--disable-renderer-backgrounding",
+    `--window-position=${WINDOW_PARKED.left},${WINDOW_PARKED.top}`,
+    `--window-size=${WINDOW_PARKED.width},${WINDOW_PARKED.height}`,
+  ]);
   for (let i = 0; i < 60; i++) {
     try {
-      return await puppeteer.connect(opts);
+      sharedBrowser = await puppeteer.connect(opts);
+      return sharedBrowser;
     } catch {}
     await new Promise((r) => setTimeout(r, 500));
   }
@@ -168,43 +302,100 @@ async function ensureUnblocked(page, url) {
     await new Promise((r) => setTimeout(r, 1200));
     if (!(await isBlocked(page))) return;
     if (!/just a moment/i.test(await page.title())) continue; // still the block page
-    console.log("  Cloudflare challenge open in the browser window — please solve it.");
-    await page
-      .waitForFunction(() => !/just a moment|third-party apps/i.test(document.title), { timeout: 300_000 })
-      .catch(() => {});
+    await waitForUser(
+      page,
+      "  Cloudflare challenge open in the browser window — please solve it.",
+      300_000,
+      () => !/just a moment|third-party apps/i.test(document.title),
+    );
     if (!(await isBlocked(page))) return;
   }
   fail(`still blocked at ${url}`);
+}
+
+function pageUrl(page) {
+  try {
+    return page.url();
+  } catch {
+    return "";
+  }
+}
+
+/** Reuse the tab we already own. Creating a page on an already-running
+ *  Chromium activates its app on macOS, so a series run must not call
+ *  browser.newPage() for every chapter. A fresh background launch usually
+ *  already has a blank tab to adopt. */
+async function getSharedPage(browser) {
+  if (sharedPage && !sharedPage.isClosed()) return sharedPage;
+  const pages = (await browser.pages()).filter((p) => !p.isClosed());
+  // Reuse the tab that is already visible in its window: a hidden tab cannot
+  // harvest lazy images, and raising it would activate the browser app.
+  let active = null;
+  for (const p of pages) {
+    const visible = await p
+      .evaluate(() => document.visibilityState === "visible")
+      .catch(() => false);
+    if (visible) {
+      active = p;
+      break;
+    }
+  }
+  const page =
+    active ||
+    pages.find((p) => /^https:\/\/comix\.to\//.test(pageUrl(p))) ||
+    pages.find((p) => pageUrl(p) === "about:blank") ||
+    pages[0];
+  if (page) {
+    sharedPage = page;
+    return page;
+  }
+  // no tabs at all (rare) — create one, then hand focus back immediately
+  const previous = frontmostApp();
+  const created = await browser.newPage();
+  await parkWindow(created);
+  if (previous && previous !== browserAppName()) activateApp(previous);
+  sharedPage = created;
+  return created;
 }
 
 /** Open the chapter page, waiting out any Cloudflare challenge with the
  *  user's help: the window stays open until the page clears. */
 async function openChapter(url) {
   const browser = await connectBrowser();
-  const page = await browser.newPage();
+  const page = await getSharedPage(browser);
   // the reader's virtualizer skips some near-square panels at narrow/default
   // viewports; a desktop-sized viewport loads them consistently
   await page.setViewport({ width: 1280, height: 900 }).catch(() => {});
+  // keep the window out of the way before any navigation: new pages can
+  // otherwise appear on-screen and steal attention
+  await parkWindow(page);
   const stopHeartbeat = startHeartbeat(page);
-  // the page's hydration API calls must land inside the site's 2 s activity window
-  await page.keyboard.press("Shift").catch(() => {});
-  await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 });
-  await ensureUnblocked(page, url);
+  try {
+    // the page's hydration API calls must land inside the site's 2 s activity window
+    await page.keyboard.press("Shift").catch(() => {});
+    await page.goto(url, { waitUntil: "domcontentloaded", timeout: 90_000 });
+    await ensureUnblocked(page, url);
 
-  const cleared = await page
-    .waitForFunction(() => !/just a moment|attention required/i.test(document.title), { timeout: 15_000 })
-    .then(() => true)
-    .catch(() => false);
+    const cleared = await page
+      .waitForFunction(() => !/just a moment|attention required/i.test(document.title), { timeout: 15_000 })
+      .then(() => true)
+      .catch(() => false);
 
-  if (!cleared) {
-    console.log("  Cloudflare challenge open in the browser window — please solve it.");
-    console.log("  waiting up to 5 minutes...");
-    await page.waitForFunction(() => !/just a moment|attention required/i.test(document.title), {
-      timeout: 300_000,
-    });
-    console.log("  challenge cleared");
+    if (!cleared) {
+      const ok = await waitForUser(
+        page,
+        "  Cloudflare challenge open in the browser window — please solve it.\n  waiting up to 5 minutes...",
+        300_000,
+        () => !/just a moment|attention required/i.test(document.title),
+      );
+      if (!ok) fail(`challenge did not clear at ${url}`);
+      console.log("  challenge cleared");
+    }
+    return { page, stopHeartbeat };
+  } catch (err) {
+    stopHeartbeat();
+    throw err;
   }
-  return { browser, page, stopHeartbeat };
 }
 
 /** Reader metadata: series, chapter number, scanlation group, total pages. */
@@ -229,9 +420,16 @@ async function readerMeta(page) {
  *  each img at insertion time; stepped scrolling of the inner container
  *  triggers the lazy loader. */
 async function harvestUrls(page, totalPages, known = {}) {
-  // lazy images never load in a hidden tab (IntersectionObserver needs a
-  // rendering pipeline), and puppeteer opens tabs in the background
-  await page.bringToFront();
+  // Lazy images never load in a hidden tab. The shared tab normally stays
+  // visible (parked, not minimized), so do not call bringToFront here: on an
+  // already-running Chromium that activates the browser app and steals focus.
+  // Only if something else made the tab hidden do we raise it, then hand focus
+  // straight back to the app the user was in.
+  if ((await page.evaluate(() => document.visibilityState).catch(() => "visible")) !== "visible") {
+    const previous = frontmostApp();
+    await page.bringToFront().catch(() => {});
+    if (previous && previous !== browserAppName()) activateApp(previous);
+  }
 
   // resumable panel index: if every page URL is already known, skip the reader
   if (Object.keys(known).length >= totalPages) {
@@ -332,10 +530,19 @@ async function harvestUrls(page, totalPages, known = {}) {
   // network channel: every image the reader actually requests, with the exact
   // headers the browser used (fallback for the separate download channel)
   const net = new Map();
-  page.on("request", (req) => {
+  // shared page: drop the previous chapter's listener before adding this one
+  const stale = netListeners.get(page);
+  if (stale) page.off("request", stale);
+  const onRequest = (req) => {
     const u = req.url();
     if (req.resourceType() === "image" && /\/hi\//.test(u)) net.set(u, req.headers());
-  });
+  };
+  netListeners.set(page, onRequest);
+  page.on("request", onRequest);
+  const dropNet = () => {
+    page.off("request", onRequest);
+    netListeners.delete(page);
+  };
 
   await page.evaluate((seed) => {
     window.__seen = { ...seed };
@@ -440,6 +647,7 @@ async function harvestUrls(page, totalPages, known = {}) {
     if (/Target closed|Session closed|Protocol error/i.test(String(err))) {
       console.error(`\n  browser tab closed during harvest — was the window closed?`);
       capture(new Error("browser tab closed during harvest"), { stage: "harvest" });
+      dropNet();
       return { failed: true };
     }
     throw err;
@@ -507,6 +715,7 @@ async function harvestUrls(page, totalPages, known = {}) {
   }
   emit({ type: "network", count: net.size });
 
+  dropNet();
   return { pages, headers: net };
 }
 
@@ -627,7 +836,7 @@ function folderName(meta) {
 
 async function downloadChapter(url, opts, dest = null) {
   console.log(url);
-  const { browser, page, stopHeartbeat } = await openChapter(url);
+  const { page, stopHeartbeat } = await openChapter(url);
   try {
     const meta = await readerMeta(page);
     console.log(`  ${meta.series} · Ch${meta.chapter}${meta.group ? ` · ${meta.group}` : ""} · ${meta.pages} pages`);
@@ -721,8 +930,7 @@ async function downloadChapter(url, opts, dest = null) {
     return true;
   } finally {
     stopHeartbeat();
-    await page.close().catch(() => {});
-    browser.disconnect(); // leave Chrome running so clearance cookies persist
+    // leave the connection and Chrome alive for the next chapter/run
   }
 }
 
@@ -928,7 +1136,7 @@ function pickReleases(raw, preferGroup) {
 
 async function downloadSeries(titleUrl, opts) {
   console.log(titleUrl);
-  const { browser, page, stopHeartbeat } = await openChapter(titleUrl);
+  const { page, stopHeartbeat } = await openChapter(titleUrl);
   let series;
   let releases;
   try {
@@ -963,8 +1171,6 @@ async function downloadSeries(titleUrl, opts) {
     }
   } finally {
     stopHeartbeat();
-    await page.close().catch(() => {});
-    browser.disconnect();
   }
   if (!releases.length) fail("no chapters found on the title page");
 
@@ -1120,7 +1326,7 @@ async function downloadSeries(titleUrl, opts) {
 
 /** Search comix.to through its own search box and return title results. */
 async function searchTitles(query) {
-  const { browser, page, stopHeartbeat } = await openChapter("https://comix.to/");
+  const { page, stopHeartbeat } = await openChapter("https://comix.to/");
   try {
     // include every content rating (safe → pornographic) in the site's search;
     // comix reads this persisted settings store when building content_rating[]
@@ -1172,14 +1378,12 @@ async function searchTitles(query) {
     return false;
   } finally {
     stopHeartbeat();
-    await page.close().catch(() => {});
-    browser.disconnect();
   }
 }
 
 /** Read a title's release status without downloading anything. */
 async function checkStatus(url) {
-  const { browser, page, stopHeartbeat } = await openChapter(url);
+  const { page, stopHeartbeat } = await openChapter(url);
   try {
     const series = (await page.title()).split("·")[0].replace(/\s*[-–|].*$/, "").trim();
     const status = await page.evaluate(() => {
@@ -1208,8 +1412,6 @@ async function checkStatus(url) {
     return false;
   } finally {
     stopHeartbeat();
-    await page.close().catch(() => {});
-    browser.disconnect();
   }
 }
 
