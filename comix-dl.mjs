@@ -1251,7 +1251,7 @@ async function downloadSeries(titleUrl, opts) {
   console.log(
     `  ${series} · ${picked.length} chapters${rangeText}${opts.limit ? ` (limited to first ${opts.limit})` : ""} · ${limited.length - queue.length} already done`,
   );
-  emit({ type: "series", series, picked: picked.length, queued: queue.length, out: seriesDir });
+  emit({ type: "series", series, picked: limited.length, queued: queue.length, out: seriesDir });
 
   // state.json is the resume ledger: written atomically after every chapter,
   // so a crash/block/quit never loses completed work. Partial page folders are
