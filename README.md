@@ -14,7 +14,7 @@ Download a manga series from comix.to as images, then pack it into a single EPUB
   - Existing `page-*.webp` files are skipped; only missing panels are retried.
 - **Per-panel recovery** — missing URLs are re-attempted individually (scroll into view, poll, viewport cycling), not by re-harvesting the chapter. Small gaps skip the full sweep entirely.
 - **Failure recovery** — transient CDN/connection errors retry with backoff (honoring `Retry-After`); chapters that still fail get a second, gentler pass (~45s cool-down, 2 workers, 8 attempts). Nothing is deleted: the run exits `2` (partial) without binding an incomplete book; rerunning retries only the failed chapters, or you can build an EPUB from the completed ones explicitly (app: “retry failed” / “build EPUB anyway”).
-- **EPUB output** — one EPUB3 book with `nav.xhtml` + `toc.ncx`, pages re-encoded to WebP under a size budget (default 300 MB) with per-page adaptive quality.
+- **Kindle-first EPUB output** — fixed-layout comic EPUB3 using KCC's page structure (per-page viewport, `fixed-layout`, `book-type=comic`, one XHTML page per image, `nav.xhtml` + `toc.ncx`, `region-mag=true`). Pages are re-encoded to grayscale JPEG under a size budget (default 300 MB) with per-page adaptive quality; `--color` keeps color.
 - **Desktop app** — Electron window with per-chapter status, live harvest/download progress, EPUB progress, stop/resume.
 - **Background browser** — the automation browser launches without activation and is parked off-screen; downloads, searches and status checks never take focus. It only comes forward when a Cloudflare challenge needs a click, then parks again and returns focus to your previous app.
 - **Library** — persistent history of downloaded titles (`~/.comix-dl/library.json`) with a read checkbox (read / to-read lists), 1–5 star scores, chapter counts and last-run dates. Existing output folders can be imported with “add folder”. Track titles by name (searches comix.to, including all content ratings: safe → pornographic) or URL without downloading; “check status” pulls comix's own status (RELEASING / HIATUS / FINISHED / …) and finished titles move into the to-read list automatically.
@@ -39,7 +39,7 @@ npm start          # development
 npm run build      # produces dist/comix-dl-darwin-arm64/comix-dl.app
 ```
 
-Paste a comix.to **title URL**, pick the preferred group, set an optional chapter limit and EPUB cap, then **Start**. **Stop** is safe — Start resumes. Output defaults to `~/Downloads/comix-dl`.
+Paste a comix.to **title URL**, pick the preferred group, set an optional chapter range (`from` / `to`, blank = first/last), chapter limit and EPUB cap, then **Start**. The range also applies to **build EPUB anyway**, so you can split a large series into volume-sized books. **Stop** is safe — Start resumes. Output defaults to `~/Downloads/comix-dl`.
 
 ## CLI
 
@@ -53,11 +53,16 @@ node comix-dl.mjs --series https://comix.to/title/<slug> --group "Violet Scans"
 # first five chapters, no EPUB
 node comix-dl.mjs --series https://comix.to/title/<slug> --group "Violet Scans" --limit 5 --no-epub
 
-# EPUB only, from an existing folder
-node comix-epub.mjs "The Perks of Being a Villainess" --max-mb 300
+# one volume-sized range (Ch50–Ch70); limit applies after the range
+node comix-dl.mjs --series https://comix.to/title/<slug> --from 50 --to 70 --max-mb 200
+
+# EPUB only, from an existing folder, also range-limited
+node comix-epub.mjs "The Perks of Being a Villainess" --max-mb 300 --from 50 --to 70
 ```
 
-Options: `--out DIR`, `--limit N`, `--group NAME`, `--max-mb N`, `--no-epub`, `--progress` (NDJSON events for the app), `--self-test`. Exit codes: `0` complete, `2` partial (some chapters failed; EPUB built from the rest), `1` failed or nothing to build.
+Options: `--out DIR`, `--from N`, `--to N`, `--limit N`, `--group NAME`, `--max-mb N`, `--no-epub`, `--progress` (NDJSON events for the app), `--self-test`. Exit codes: `0` complete, `2` partial (some chapters failed; EPUB built from the rest), `1` failed or nothing to build.
+
+EPUB builder options: `--max-mb N` (default 300), `--width N` (default 800), `--from N`, `--to N`, `--color` (default is grayscale for e-ink), `--no-panel-view` (sets `region-mag=false`), `--device-width` / `--device-height` (default 1072×1448), `--progress`.
 
 ## How it works
 
@@ -71,7 +76,7 @@ The site's reader skips some near-square panels depending on viewport; the harve
 ## Tests
 
 ```bash
-npm test          # offline, no browser/network: parsing, CLI errors, EPUB structure/ToC, size budget
+npm test          # offline, no browser/network: parsing, CLI errors, fixed-layout EPUB structure/ToC, size budget, chapter range
 node comix-dl.mjs --self-test
 ```
 

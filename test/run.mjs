@@ -138,6 +138,21 @@ async function makeSeries(baseDir, { width, height, noisy }) {
   return seriesDir;
 }
 
+async function makeMultiSeries(baseDir) {
+  const seriesDir = path.join(baseDir, "Range Series");
+  const labels = ["Ch1 (Test)", "Ch2 (Test)", "Ch3 (Test)"];
+  for (let c = 0; c < labels.length; c++) {
+    const chapterDir = path.join(seriesDir, labels[c]);
+    mkdirSync(chapterDir, { recursive: true });
+    const raw = gradientPage(300, 500, [120 + c * 40, 80, 160 - c * 30], 0x9000 + c);
+    const webp = await sharp(raw, { raw: { width: 300, height: 500, channels: 3 } })
+      .webp({ quality: 78, effort: 5 })
+      .toBuffer();
+    writeFileSync(path.join(chapterDir, "page-001.webp"), webp);
+  }
+  return seriesDir;
+}
+
 async function test(name, fn) {
   const started = Date.now();
   try {
@@ -156,7 +171,7 @@ async function test(name, fn) {
   }
 }
 
-function assertEpubStructure(epub, { chapterLabel, pageCount }) {
+function assertEpubStructure(epub, { chapterLabel, pageCount, chapterCount = 1 }) {
   assert.ok(existsSync(epub), `expected EPUB output at ${epub}`);
   const size = statSync(epub).size;
   assert.ok(size > 10 * 1024, `EPUB is only ${size} bytes (expected > 10 KB)`);
@@ -168,7 +183,7 @@ function assertEpubStructure(epub, { chapterLabel, pageCount }) {
   const mimetype = zipText(epub, "mimetype").replace(/\r?\n/g, "").trim();
   assert.equal(mimetype, "application/epub+zip", `bad mimetype content: ${mimetype}`);
 
-  for (const required of ["OEBPS/toc.ncx", "OEBPS/nav.xhtml", "OEBPS/content.opf"]) {
+  for (const required of ["OEBPS/toc.ncx", "OEBPS/nav.xhtml", "OEBPS/content.opf", "OEBPS/style.css"]) {
     assert.ok(entries.includes(required), `archive is missing ${required}`);
   }
 
@@ -178,17 +193,33 @@ function assertEpubStructure(epub, { chapterLabel, pageCount }) {
     opf.includes('media-type="application/x-dtbncx+xml"'),
     "content.opf lacks the NCX media-type declaration",
   );
+  assert.ok(opf.includes('<meta name="fixed-layout" content="true"/>'), "content.opf lacks fixed-layout");
+  assert.ok(opf.includes('<meta name="book-type" content="comic"/>'), "content.opf lacks book-type=comic");
 
   const ncx = zipText(epub, "OEBPS/toc.ncx");
   const navPoints = ncx.match(/<navPoint\b/g) ?? [];
-  assert.equal(navPoints.length, 1, `toc.ncx has ${navPoints.length} <navPoint> entries, expected 1`);
+  assert.equal(
+    navPoints.length,
+    chapterCount,
+    `toc.ncx has ${navPoints.length} <navPoint> entries, expected ${chapterCount}`,
+  );
   assert.ok(
     ncx.includes(`<text>${chapterLabel}</text>`),
     `toc.ncx label does not contain ${chapterLabel}`,
   );
 
-  const pages = entries.filter((e) => e.startsWith("OEBPS/img/") && e.endsWith(".webp"));
-  assert.equal(pages.length, pageCount, `expected ${pageCount} .webp images, found ${pages.length}`);
+  const images = entries.filter((e) => e.startsWith("OEBPS/Images/") && e.endsWith(".jpg"));
+  const pages = entries.filter((e) => e.startsWith("OEBPS/Text/") && e.endsWith(".xhtml"));
+  assert.equal(images.length, pageCount, `expected ${pageCount} .jpg images, found ${images.length}`);
+  assert.equal(pages.length, pageCount, `expected ${pageCount} XHTML pages, found ${pages.length}`);
+
+  const firstPage = zipText(epub, "OEBPS/Text/p00001.xhtml");
+  assert.match(
+    firstPage,
+    /<meta name="viewport" content="width=\d+, height=\d+"\/>/,
+    "page lacks a fixed-layout viewport",
+  );
+  assert.match(firstPage, /<img width="\d+" height="\d+"/, "page image lacks explicit dimensions");
 
   return size;
 }
@@ -215,6 +246,12 @@ async function main() {
     expectStatus(r, 1, "unknown option");
   });
 
+  await test("CLI rejects inverted chapter range", () => {
+    const r = runNode("comix-dl.mjs", ["--series", "https://comix.to/title/x", "--from", "3", "--to", "2"]);
+    expectStatus(r, 1, "CLI inverted range");
+    assert.match(r.err, /--from must be <= --to/, `unexpected stderr: ${clip(r.err)}`);
+  });
+
   await test("epub fixture structure", async () => {
     const base = path.join(tmpRoot, "basic");
     const seriesDir = await makeSeries(base, { width: 500, height: 1400, noisy: false });
@@ -232,6 +269,37 @@ async function main() {
     assert.ok(existsSync(epub), `expected EPUB output at ${epub}`);
     const size = statSync(epub).size;
     assert.ok(size <= 3_000_000, `EPUB is ${size} bytes, over the 3,000,000-byte budget`);
+  });
+
+  await test("epub chapter range", async () => {
+    const base = path.join(tmpRoot, "range");
+    const seriesDir = await makeMultiSeries(base);
+    const r = runNode("comix-epub.mjs", [
+      seriesDir,
+      "--max-mb",
+      "5",
+      "--from",
+      "2",
+      "--to",
+      "2",
+    ]);
+    expectStatus(r, 0, "epub range");
+    const epub = `${seriesDir} - Ch2.epub`;
+    assertEpubStructure(epub, { chapterLabel: "Ch2 (Test)", pageCount: 1 });
+    const ncx = zipText(epub, "OEBPS/toc.ncx");
+    assert.ok(ncx.includes("Ch2 (Test)"), "range EPUB labels should name Ch2");
+    assert.ok(!ncx.includes("Ch1 (Test)"), "range EPUB should not include Ch1");
+    assert.ok(!ncx.includes("Ch3 (Test)"), "range EPUB should not include Ch3");
+    assert.ok(zipText(epub, "OEBPS/content.opf").includes("Range Series - Ch2"), "range title missing");
+  });
+
+  await test("epub rejects inverted range", () => {
+    const base = path.join(tmpRoot, "bad-range");
+    const seriesDir = path.join(base, "Range Series");
+    mkdirSync(seriesDir, { recursive: true });
+    const r = runNode("comix-epub.mjs", [seriesDir, "--from", "3", "--to", "2"]);
+    expectStatus(r, 1, "epub inverted range");
+    assert.match(r.err, /--from must be <= --to/, `unexpected stderr: ${clip(r.err)}`);
   });
 
   cleanup();

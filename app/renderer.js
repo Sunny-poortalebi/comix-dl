@@ -10,7 +10,8 @@ window.addEventListener("unhandledrejection", (e) =>
 
 const $ = (id) => document.getElementById(id);
 const els = {
-  url: $("url"), group: $("group"), limit: $("limit"), maxMb: $("maxMb"), out: $("out"),
+  url: $("url"), group: $("group"), limit: $("limit"), from: $("from"), to: $("to"),
+  maxMb: $("maxMb"), out: $("out"),
   noEpub: $("noEpub"), start: $("start"), stop: $("stop"), pickOut: $("pickOut"),
   openOut: $("openOut"), openEpub: $("openEpub"), clearLog: $("clearLog"),
   retryFailed: $("retryFailed"), buildEpub: $("buildEpub"),
@@ -24,6 +25,13 @@ const els = {
   libImport: $("libImport"),
   trackUrl: $("trackUrl"), trackBtn: $("trackBtn"), searchResults: $("searchResults"),
   libSort: $("libSort"),
+};
+
+const rangeValue = (el) => {
+  const raw = el.value.trim();
+  if (raw === "") return null;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : null;
 };
 
 const st = {
@@ -631,6 +639,8 @@ async function start() {
     url: els.url.value.trim(),
     group: els.group.value.trim(),
     limit: Number(els.limit.value) || 0,
+    from: rangeValue(els.from),
+    to: rangeValue(els.to),
     maxMb: Number(els.maxMb.value) || 300,
     noEpub: els.noEpub.checked,
     out: els.out.value.trim() || null,
@@ -668,7 +678,12 @@ els.buildEpub.addEventListener("click", async () => {
   if (!st.outDir) return log("no output folder to build", true);
   els.buildEpub.disabled = true;
   log("building EPUB from the chapters that completed…");
-  const res = await window.api.buildEpub(st.outDir, Number(els.maxMb.value) || 300);
+  const res = await window.api.buildEpub(
+    st.outDir,
+    Number(els.maxMb.value) || 300,
+    rangeValue(els.from),
+    rangeValue(els.to),
+  );
   els.buildEpub.disabled = false;
   if (res?.error) return log(res.error, true);
   if (res?.code !== 0) log(`EPUB build failed (exit ${res?.code})`, true);
@@ -759,6 +774,8 @@ window.api.onAutostart((cfg) => {
   els.url.value = cfg.url || "";
   els.group.value = cfg.group || "Violet Scans";
   els.limit.value = cfg.limit ?? 0;
+  els.from.value = cfg.from ?? "";
+  els.to.value = cfg.to ?? "";
   els.maxMb.value = cfg.maxMb ?? 300;
   els.noEpub.checked = !!cfg.noEpub;
   if (cfg.out) els.out.value = cfg.out;

@@ -32,7 +32,7 @@
 import puppeteer from "puppeteer-core";
 import * as Sentry from "@sentry/node";
 import { spawn, spawnSync, execFileSync } from "node:child_process";
-import { mkdir, writeFile, readFile, readdir, stat, rename } from "node:fs/promises";
+import { mkdir, writeFile, readFile, readdir, rename, open } from "node:fs/promises";
 import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 import os from "node:os";
@@ -95,7 +95,16 @@ const emit = (ev) => {
 
 function parseArgs(argv) {
   const urls = [];
-  const opts = { out: process.cwd(), series: null, group: null, epub: true, maxMb: 300 };
+  const opts = {
+    out: process.cwd(),
+    series: null,
+    group: null,
+    epub: true,
+    maxMb: 300,
+    limit: null,
+    from: null,
+    to: null,
+  };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === "--out") opts.out = argv[++i];
@@ -104,6 +113,8 @@ function parseArgs(argv) {
     else if (a === "--no-epub") opts.epub = false;
     else if (a === "--max-mb") opts.maxMb = Number(argv[++i]);
     else if (a === "--limit") opts.limit = Number(argv[++i]);
+    else if (a === "--from") opts.from = Number(argv[++i]);
+    else if (a === "--to") opts.to = Number(argv[++i]);
     else if (a === "--progress") PROGRESS = true;
     else if (a === "--self-test") opts.selfTest = true;
     else if (a === "--status-check") (opts.statusChecks ||= []).push(argv[++i]);
@@ -111,8 +122,16 @@ function parseArgs(argv) {
     else if (a.startsWith("--")) fail(`unknown option: ${a}`);
     else urls.push(a);
   }
+  for (const [name, value] of [["--from", opts.from], ["--to", opts.to]]) {
+    if (value != null && (!Number.isFinite(value) || value < 0))
+      fail(`${name} must be a non-negative chapter number`);
+  }
+  if (opts.from != null && opts.to != null && opts.from > opts.to)
+    fail("--from must be <= --to");
   if (!opts.series && !opts.selfTest && !opts.statusChecks?.length && !opts.search && urls.length === 0)
-    fail("usage: node comix-dl.mjs <chapter-url> [...] | --series <title-url> [--group NAME] [--out DIR] [--no-epub] [--max-mb N]");
+    fail(
+      "usage: node comix-dl.mjs <chapter-url> [...] | --series <title-url> [--group NAME] [--out DIR] [--no-epub] [--max-mb N] [--from N] [--to N]",
+    );
   return { urls, opts };
 }
 
@@ -721,6 +740,40 @@ async function harvestUrls(page, totalPages, known = {}) {
 
 const EXT_BY_TYPE = { "image/webp": "webp", "image/jpeg": "jpg", "image/png": "png", "image/gif": "gif" };
 
+/** Validate the image container, not its size: the last page of a chapter is
+ *  sometimes a legitimately tiny strip (the Ch82 strip is a 78-byte WebP). */
+function validImage(buf, type) {
+  if (!buf.length) return false;
+  if (type === "image/webp")
+    return buf.length >= 12 && buf.subarray(0, 4).toString() === "RIFF" && buf.subarray(8, 12).toString() === "WEBP";
+  if (type === "image/jpeg") return buf.length >= 2 && buf[0] === 0xff && buf[1] === 0xd8;
+  if (type === "image/png")
+    return (
+      buf.length >= 8 &&
+      buf.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+    );
+  if (type === "image/gif") {
+    const sig = buf.subarray(0, 6).toString();
+    return buf.length >= 6 && (sig === "GIF87a" || sig === "GIF89a");
+  }
+  return /^image\//.test(type);
+}
+
+async function existingImage(p, ext) {
+  let fh;
+  try {
+    fh = await open(p, "r");
+    const buf = Buffer.alloc(12);
+    const { bytesRead } = await fh.read(buf, 0, buf.length, 0);
+    const type = ext === "jpg" || ext === "jpeg" ? "image/jpeg" : `image/${ext}`;
+    return validImage(buf.subarray(0, bytesRead), type);
+  } catch {
+    return false;
+  } finally {
+    await fh?.close().catch(() => {});
+  }
+}
+
 const sleepMs = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function retryAfterMs(value) {
@@ -746,7 +799,7 @@ async function downloadAll(pages, dir, headers = new Map(), { concurrency = 6, a
   const existing = new Set();
   for (const f of await readdir(dir)) {
     const m = /^page-(\d+)\.(webp|jpe?g|png)$/i.exec(f);
-    if (m && (await stat(path.join(dir, f))).size > 10_000) existing.add(Number(m[1]));
+    if (m && (await existingImage(path.join(dir, f), m[2].toLowerCase()))) existing.add(Number(m[1]));
   }
   let done = 0;
   const failures = [];
@@ -784,18 +837,9 @@ async function downloadAll(pages, dir, headers = new Map(), { concurrency = 6, a
         const type = (res.headers.get("content-type") || "").split(";")[0];
         const ext = EXT_BY_TYPE[type] || "webp";
         const buf = Buffer.from(await res.arrayBuffer());
-        // tiny panels are legitimate (near-blank pages compress to a few KB);
+        // tiny panels are legitimate (near-blank pages can be <100 bytes);
         // validate the actual image container instead of a size heuristic
-        const valid =
-          buf.length > 100 &&
-          (type === "image/webp"
-            ? buf.subarray(0, 4).toString() === "RIFF" && buf.subarray(8, 12).toString() === "WEBP"
-            : type === "image/jpeg"
-              ? buf[0] === 0xff && buf[1] === 0xd8
-              : type === "image/png"
-                ? buf.subarray(1, 4).toString() === "PNG"
-                : /^image\//.test(type));
-        if (!valid) throw new Error(`invalid image (${type || "unknown"}, ${buf.length} bytes)`);
+        if (!validImage(buf, type)) throw new Error(`invalid image (${type || "unknown"}, ${buf.length} bytes)`);
         await writeFile(path.join(dir, `page-${String(num).padStart(3, "0")}.${ext}`), buf);
         done++;
         process.stdout.write(`\r  downloading: ${done}/${entries.length}`);
@@ -1158,7 +1202,7 @@ async function downloadSeries(titleUrl, opts) {
       } catch {}
     }
     if (!releases) {
-      if (opts.limit) {
+      if (opts.limit && opts.from == null && opts.to == null) {
         releases = await locateOldestChapters(page, opts.limit, opts.group);
       } else {
         const enumerated = await enumerateReleases(page);
@@ -1175,7 +1219,14 @@ async function downloadSeries(titleUrl, opts) {
   if (!releases.length) fail("no chapters found on the title page");
 
   const picked = pickReleases(releases, opts.group);
-  const limited = opts.limit ? picked.slice(0, opts.limit) : picked;
+  let ranged = picked;
+  if (opts.from != null) ranged = ranged.filter((r) => parseFloat(r.number) >= opts.from - 1e-9);
+  if (opts.to != null) ranged = ranged.filter((r) => parseFloat(r.number) <= opts.to + 1e-9);
+  const limited = opts.limit ? ranged.slice(0, opts.limit) : ranged;
+  if (!limited.length)
+    fail(
+      `no chapters in range ${opts.from != null ? `from Ch${opts.from}` : "from start"} ${opts.to != null ? `to Ch${opts.to}` : "to end"}`,
+    );
   const seriesDir = path.join(opts.out, series.replace(/[\\/:*?"<>|]/g, ""));
   await mkdir(seriesDir, { recursive: true });
   const statePath = path.join(seriesDir, "state.json");
@@ -1189,8 +1240,16 @@ async function downloadSeries(titleUrl, opts) {
   }
 
   const queue = limited.filter((r) => state.chapters[r.number]?.status !== "done");
+  const rangeText =
+    opts.from != null && opts.to != null
+      ? ` (Ch${opts.from}-Ch${opts.to})`
+      : opts.from != null
+        ? ` (from Ch${opts.from})`
+        : opts.to != null
+          ? ` (to Ch${opts.to})`
+          : "";
   console.log(
-    `  ${series} · ${picked.length} chapters${opts.limit ? ` (limited to first ${opts.limit})` : ""} · ${limited.length - queue.length} already done`,
+    `  ${series} · ${picked.length} chapters${rangeText}${opts.limit ? ` (limited to first ${opts.limit})` : ""} · ${limited.length - queue.length} already done`,
   );
   emit({ type: "series", series, picked: picked.length, queued: queue.length, out: seriesDir });
 
@@ -1311,6 +1370,8 @@ async function downloadSeries(titleUrl, opts) {
         seriesDir,
         "--max-mb",
         String(opts.maxMb),
+        ...(opts.from != null ? ["--from", String(opts.from)] : []),
+        ...(opts.to != null ? ["--to", String(opts.to)] : []),
         ...(PROGRESS ? ["--progress"] : []),
       ],
       { stdio: "inherit" },
@@ -1427,6 +1488,17 @@ function runSelfTest() {
   assert(rel.group === "Violet Scans", "group parse");
   assert(rel.age === 43_200, "age parse");
   assert(ageSeconds("8mos ago") === 8 * 2_592_000, "months parse");
+  // comix's final page can be a legitimate 78-byte WebP strip
+  const tinyWebp = Buffer.concat([
+    Buffer.from("RIFF"),
+    Buffer.alloc(4),
+    Buffer.from("WEBPVP8 "),
+    Buffer.alloc(62),
+  ]);
+  assert(tinyWebp.length === 78, "tiny webp fixture length");
+  assert(validImage(tinyWebp, "image/webp"), "tiny webp accepted");
+  assert(!validImage(Buffer.from("<html>not an image</html>"), "image/webp"), "html rejected");
+  assert(!validImage(Buffer.alloc(0), "image/webp"), "empty image rejected");
 
   const picked = pickReleases(
     [

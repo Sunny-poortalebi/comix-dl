@@ -154,6 +154,8 @@ ipcMain.handle("start", async (_e, cfg) => {
     "--progress",
   ];
   if (cfg.limit > 0) args.push("--limit", String(cfg.limit));
+  if (Number.isFinite(cfg.from) && cfg.from >= 0) args.push("--from", String(cfg.from));
+  if (Number.isFinite(cfg.to) && cfg.to >= 0) args.push("--to", String(cfg.to));
   if (cfg.noEpub) args.push("--no-epub");
 
   // run the pipeline on Electron's bundled Node runtime: a Finder-launched
@@ -468,18 +470,20 @@ ipcMain.handle("library:ack", (_e, key) => {
 });
 
 // build an EPUB from the chapters that completed (failed folders are skipped)
-ipcMain.handle("epub:build", async (_e, dir, maxMb) => {
+ipcMain.handle("epub:build", async (_e, dir, maxMb, from, to) => {
   if (child) return { error: "a download is running — try again when it finishes" };
   if (epubRunning) return { error: "an EPUB build is already running" };
   if (!dir || !fs.existsSync(dir)) return { error: "no completed chapters to build" };
   epubRunning = true;
   try {
     return await new Promise((resolve) => {
-      const p = spawn(
-        process.execPath,
-        [path.join(ROOT, "comix-epub.mjs"), dir, "--max-mb", String(maxMb || 300), "--progress"],
-        { env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" } },
-      );
+      const args = [path.join(ROOT, "comix-epub.mjs"), dir, "--max-mb", String(maxMb || 300)];
+      if (Number.isFinite(from) && from >= 0) args.push("--from", String(from));
+      if (Number.isFinite(to) && to >= 0) args.push("--to", String(to));
+      args.push("--progress");
+      const p = spawn(process.execPath, args, {
+        env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+      });
       let buf = "";
       const onData = (d) => {
         buf += d.toString();
@@ -556,6 +560,8 @@ app.whenReady().then(() => {
         url: process.env.COMIX_SMOKE_URL,
         group: process.env.COMIX_SMOKE_GROUP || "Violet Scans",
         limit: Number(process.env.COMIX_SMOKE_LIMIT || 0),
+        from: process.env.COMIX_SMOKE_FROM ? Number(process.env.COMIX_SMOKE_FROM) : null,
+        to: process.env.COMIX_SMOKE_TO ? Number(process.env.COMIX_SMOKE_TO) : null,
         maxMb: Number(process.env.COMIX_SMOKE_MAXMB || 300),
         noEpub: process.env.COMIX_SMOKE_NOEPUB === "1",
         out: process.env.COMIX_SMOKE_OUT || path.join(app.getPath("downloads"), "comix-dl"),

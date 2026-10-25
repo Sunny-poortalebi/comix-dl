@@ -1,12 +1,16 @@
 #!/usr/bin/env node
-// comix-epub — pack a comix-dl series folder into one EPUB within a size budget.
+// comix-epub — pack a series folder into a fixed-layout comic EPUB.
 //
-// usage: node comix-epub.mjs <series-dir> [--max-mb 300] [--width 600]
+// usage: node comix-epub.mjs <series-dir> [--max-mb 300] [--width 800]
+//        [--from N] [--to N] [--color] [--no-panel-view]
 //
-// Every page is downscaled to `width` and re-encoded as WebP with the highest
-// quality step that fits a per-page byte target derived from the budget, so the
-// whole book lands under the cap while simple pages stay crisp. One XHTML per
-// chapter, images stacked vertically (webtoon layout).
+// Each source page becomes one full-page JPEG and one XHTML page, with the
+// fixed-layout/book-type=comic metadata Kindle expects for manga. This is the
+// structure KCC/Kindle comics use; it converts far more reliably through Send
+// to Kindle than a reflowable stack of images.
+//
+// Images are grayscale by default (e-ink friendly, smaller). Pass --color for
+// tablets/color Kindles.
 
 import sharp from "sharp";
 import yazl from "yazl";
@@ -19,7 +23,6 @@ import crypto from "node:crypto";
 
 let PROGRESS = false;
 const emit = (ev) => {
-  // leading newline: progress lines use "\r" and would otherwise swallow the event
   if (PROGRESS) process.stdout.write(`\n@@P ${JSON.stringify(ev)}\n`);
 };
 
@@ -55,20 +58,53 @@ function fail(msg) {
 const args = process.argv.slice(2);
 let seriesDir = null;
 let maxMb = 300;
-let width = 600;
+let width = 800;
+let color = false;
+let panelView = true;
+let from = null;
+let to = null;
+let deviceWidth = 1072;
+let deviceHeight = 1448;
 for (let i = 0; i < args.length; i++) {
   const a = args[i];
   if (a === "--max-mb") maxMb = Number(args[++i]);
   else if (a === "--width") width = Number(args[++i]);
+  else if (a === "--from") from = Number(args[++i]);
+  else if (a === "--to") to = Number(args[++i]);
+  else if (a === "--device-width") deviceWidth = Number(args[++i]);
+  else if (a === "--device-height") deviceHeight = Number(args[++i]);
+  else if (a === "--color") color = true;
+  else if (a === "--no-panel-view") panelView = false;
   else if (a === "--progress") PROGRESS = true;
   else if (a.startsWith("--")) fail(`unknown option: ${a}`);
   else seriesDir = a;
 }
 if (!seriesDir || !existsSync(seriesDir))
-  fail("usage: node comix-epub.mjs <series-dir> [--max-mb 300] [--width 600]");
+  fail("usage: node comix-epub.mjs <series-dir> [--max-mb 300] [--width 800] [--from N] [--to N]");
+if (!Number.isFinite(maxMb) || maxMb <= 0) fail("--max-mb must be a positive number");
+if (!Number.isFinite(width) || width <= 0) fail("--width must be a positive number");
+for (const [name, value] of [["--from", from], ["--to", to]]) {
+  if (value != null && (!Number.isFinite(value) || value < 0))
+    fail(`${name} must be a non-negative chapter number`);
+}
+if (from != null && to != null && from > to) fail("--from must be <= --to");
 
 const IMG_RE = /^page-(\d+)\.(webp|jpe?g|png)$/i;
-const QUALITY_LADDER = [78, 68, 58, 50, 42, 36];
+const QUALITY_LADDER = color
+  ? [72, 65, 58, 52, 46, 40, 34, 28, 22, 16]
+  : [68, 60, 54, 48, 42, 36, 30, 24, 18];
+const CONCURRENCY = Math.max(1, Math.min(4, os.cpus().length - 1));
+
+const fmtNum = (n) => String(Number(n)).replace(/\.0$/, "");
+const esc = (s) =>
+  String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+
+function rangeSuffix() {
+  if (from == null && to == null) return "";
+  if (from != null && to != null) return from === to ? ` - Ch${fmtNum(from)}` : ` - Ch${fmtNum(from)}-${fmtNum(to)}`;
+  if (from != null) return ` - Ch${fmtNum(from)}+`;
+  return ` - Ch0-${fmtNum(to)}`;
+}
 
 async function scanChapters(dir) {
   // respect the download ledger: never bind a chapter that failed mid-way
@@ -88,72 +124,94 @@ async function scanChapters(dir) {
     if (images.length) chapters.push({ number: parseFloat(m[1]), label: name, dir: chapDir, images });
   }
   chapters.sort((a, b) => a.number - b.number);
-  return chapters;
+  return chapters.filter(
+    (c) => (from == null || c.number >= from - 1e-9) && (to == null || c.number <= to + 1e-9),
+  );
+}
+
+function jpegPipeline(file, targetWidth) {
+  let s = sharp(file, { failOn: "none" }).rotate().resize({
+    width: targetWidth,
+    withoutEnlargement: true,
+  });
+  if (!color) s = s.grayscale();
+  return s;
 }
 
 async function encodePage(file, target) {
-  const base = sharp(file, { failOn: "none" }).resize({ width, withoutEnlargement: true });
+  const base = jpegPipeline(file, width);
   let fallback = null;
   for (const q of QUALITY_LADDER) {
-    const buf = await base.clone().webp({ quality: q, effort: 5 }).toBuffer();
-    if (buf.length <= target) return buf;
-    fallback = buf;
+    const { data, info } = await base
+      .clone()
+      .jpeg({ quality: q, mozjpeg: true, chromaSubsampling: "4:4:4" })
+      .toBuffer({ resolveWithObject: true });
+    const page = { buf: data, width: info.width, height: info.height };
+    if (data.length <= target) return page;
+    fallback = page;
   }
-  // quality floor still misses the target: trade dimensions for bytes
-  for (const scale of [0.85, 0.72, 0.6]) {
-    const buf = await sharp(file, { failOn: "none" })
-      .resize({ width: Math.max(360, Math.round(width * scale)), withoutEnlargement: true })
-      .webp({ quality: 34, effort: 5 })
-      .toBuffer();
-    if (buf.length <= target) return buf;
-    fallback = buf;
+  // quality floor still misses the budget: trade dimensions for bytes
+  for (const scale of [0.85, 0.72, 0.6, 0.5, 0.42]) {
+    const { data, info } = await jpegPipeline(file, Math.max(320, Math.round(width * scale)))
+      .jpeg({ quality: 32, mozjpeg: true, chromaSubsampling: "4:4:4" })
+      .toBuffer({ resolveWithObject: true });
+    const page = { buf: data, width: info.width, height: info.height };
+    if (data.length <= target) return page;
+    fallback = page;
   }
   return fallback;
 }
 
-function esc(s) {
-  return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-}
-
-function xhtml(title, body) {
-  return `<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
-<head><meta charset="utf-8"/><title>${esc(title)}</title><link rel="stylesheet" href="style.css"/></head>
-<body>${body}</body>
-</html>`;
-}
-
 async function encodeAll(chapters, target, pass) {
-  const encoded = [];
-  const total = chapters.reduce((n, c) => n + c.images.length, 0);
+  const tasks = [];
+  for (let ci = 0; ci < chapters.length; ci++)
+    for (let ii = 0; ii < chapters[ci].images.length; ii++)
+      tasks.push({ ci, ii, file: path.join(chapters[ci].dir, chapters[ci].images[ii]) });
+  const encoded = chapters.map((ch) => ({ ...ch, imgs: new Array(ch.images.length) }));
+  let next = 0;
   let done = 0;
   let bytes = 0;
-  for (const ch of chapters) {
-    const imgs = [];
-    for (const f of ch.images) {
-      const buf = await encodePage(path.join(ch.dir, f), target);
-      imgs.push(buf);
-      bytes += buf.length;
-      done++;
-      if (done % 100 === 0 || done === total)
-        process.stdout.write(`\r  pass ${pass}: encoding ${done}/${total} (${(bytes / 1e6).toFixed(1)} MB)`);
-      emit({ type: "epubEncode", pass, done, total, bytes });
-    }
-    encoded.push({ chapter: ch, imgs });
-  }
+  await Promise.all(
+    Array.from({ length: Math.min(CONCURRENCY, tasks.length) }, async () => {
+      while (next < tasks.length) {
+        const task = tasks[next++];
+        const page = await encodePage(task.file, target);
+        encoded[task.ci].imgs[task.ii] = page;
+        bytes += page.buf.length;
+        done++;
+        if (done % 100 === 0 || done === tasks.length) {
+          process.stdout.write(
+            `\r  pass ${pass}: encoding ${done}/${tasks.length} (${(bytes / 1e6).toFixed(1)} MB)`,
+          );
+          emit({ type: "epubEncode", pass, done, total: tasks.length, bytes });
+        }
+      }
+    }),
+  );
   process.stdout.write("\n");
   return { encoded, bytes };
 }
 
+function xhtml(page, imageName, w, h) {
+  return `<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
+<head><meta charset="utf-8"/><title>Page ${page}</title><link rel="stylesheet" href="../style.css"/>
+<meta name="viewport" content="width=${w}, height=${h}"/></head>
+<body><img width="${w}" height="${h}" src="../Images/${imageName}" alt="Page ${page}"/></body>
+</html>`;
+}
+
 async function main() {
   const chapters = await scanChapters(seriesDir);
-  if (!chapters.length) fail(`no chapter folders with images under ${seriesDir}`);
+  if (!chapters.length) fail(`no completed chapters${rangeSuffix() ? ` in range${rangeSuffix()}` : ""} under ${seriesDir}`);
   const totalImages = chapters.reduce((n, c) => n + c.images.length, 0);
   const budget = maxMb * 1e6;
-  let target = Math.floor((budget - 2e6) / totalImages); // reserve 2 MB for xhtml/opf/zip overhead
+  const overhead = Math.min(3e6, budget * 0.02 + 200_000);
+  let target = Math.max(2048, Math.floor((budget - overhead) / totalImages));
   const series = path.basename(seriesDir);
-  const outPath = path.join(path.dirname(seriesDir), `${series}.epub`);
+  const title = `${series}${rangeSuffix()}`;
+  const outPath = path.join(path.dirname(seriesDir), `${title}.epub`);
   console.log(
     `  ${chapters.length} chapters · ${totalImages} pages · target ${Math.round(target / 1024)} KB/page · cap ${maxMb} MB`,
   );
@@ -162,9 +220,9 @@ async function main() {
   for (let pass = 1; pass <= 2; pass++) {
     const res = await encodeAll(chapters, target, pass);
     encoded = res.encoded;
-    if (res.bytes <= budget - 1.5e6) break;
+    if (res.bytes <= budget - 1.2e6) break;
     if (pass === 2) fail(`cannot fit ${totalImages} pages under ${maxMb} MB at width ${width}`);
-    target = Math.floor(target * ((budget - 1.8e6) / res.bytes) * 0.98);
+    target = Math.max(2048, Math.floor(target * ((budget - 1.5e6) / res.bytes) * 0.98));
     console.log(`  over budget — retrying with ${Math.round(target / 1024)} KB/page`);
   }
 
@@ -184,23 +242,30 @@ async function main() {
   ];
   const spine = [];
   const navItems = [];
-  const tocEntries = [];
-
-  encoded.forEach(({ chapter, imgs }, ci) => {
-    const chId = `ch${String(ci + 1).padStart(3, "0")}`;
-    const body = imgs
-      .map((buf, pi) => {
-        const name = `img/${chId}-p${String(pi + 1).padStart(3, "0")}.webp`;
-        zip.addBuffer(buf, `OEBPS/${name}`, { compress: false });
-        manifest.push(`<item id="${chId}p${pi + 1}" href="${name}" media-type="image/webp"/>`);
-        return `<img src="${name}" alt="Page ${pi + 1}"/>`;
-      })
-      .join("");
-    zip.addBuffer(Buffer.from(xhtml(chapter.label, `<h1>${esc(chapter.label)}</h1>${body}`)), `OEBPS/${chId}.xhtml`);
-    manifest.push(`<item id="${chId}" href="${chId}.xhtml" media-type="application/xhtml+xml"/>`);
-    spine.push(`<itemref idref="${chId}"/>`);
-    navItems.push(`<li><a href="${chId}.xhtml">${esc(chapter.label)}</a></li>`);
-    tocEntries.push({ id: chId, label: chapter.label });
+  const toc = [];
+  let page = 0;
+  encoded.forEach((chapter) => {
+    chapter.firstPage = page + 1;
+    for (const imgPage of chapter.imgs) {
+      page++;
+      const id = `p${String(page).padStart(5, "0")}`;
+      const img = `${id}.jpg`;
+      zip.addBuffer(imgPage.buf, `OEBPS/Images/${img}`, { compress: false });
+      zip.addBuffer(
+        Buffer.from(xhtml(page, img, imgPage.width, imgPage.height)),
+        `OEBPS/Text/${id}.xhtml`,
+      );
+      manifest.push(`<item id="img${id}" href="Images/${img}" media-type="image/jpeg"/>`);
+      manifest.push(`<item id="${id}" href="Text/${id}.xhtml" media-type="application/xhtml+xml"/>`);
+      spine.push(`<itemref idref="${id}"/>`);
+    }
+    navItems.push(
+      `<li><a href="Text/p${String(chapter.firstPage).padStart(5, "0")}.xhtml">${esc(chapter.label)}</a></li>`,
+    );
+    toc.push({
+      id: `p${String(chapter.firstPage).padStart(5, "0")}`,
+      label: chapter.label,
+    });
   });
 
   const nav = `<?xml version="1.0" encoding="UTF-8"?>
@@ -219,12 +284,12 @@ async function main() {
     <meta name="dtb:totalPageCount" content="0"/>
     <meta name="dtb:maxPageNumber" content="0"/>
   </head>
-  <docTitle><text>${esc(series)}</text></docTitle>
+  <docTitle><text>${esc(title)}</text></docTitle>
   <navMap>
-${tocEntries
+${toc
   .map(
     (e, i) =>
-      `    <navPoint id="navPoint-${i + 1}" playOrder="${i + 1}"><navLabel><text>${esc(e.label)}</text></navLabel><content src="${e.id}.xhtml"/></navPoint>`,
+      `    <navPoint id="navPoint-${i + 1}" playOrder="${i + 1}"><navLabel><text>${esc(e.label)}</text></navLabel><content src="Text/${e.id}.xhtml"/></navPoint>`,
   )
   .join("\n")}
   </navMap>
@@ -235,16 +300,29 @@ ${tocEntries
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
     <dc:identifier id="pub-id">urn:uuid:${uuid}</dc:identifier>
-    <dc:title>${esc(series)}</dc:title>
+    <dc:title>${esc(title)}</dc:title>
     <dc:language>en</dc:language>
+    <dc:contributor id="contributor">KindleComicConverter-compatible</dc:contributor>
     <meta property="dcterms:modified">${new Date().toISOString().replace(/\.\d+Z$/, "Z")}</meta>
+    <meta name="fixed-layout" content="true"/>
+    <meta name="original-resolution" content="${deviceWidth}x${deviceHeight}"/>
+    <meta name="book-type" content="comic"/>
+    <meta name="primary-writing-mode" content="horizontal-lr"/>
+    <meta name="zero-gutter" content="true"/>
+    <meta name="zero-margin" content="true"/>
+    <meta name="ke-border-color" content="#FFFFFF"/>
+    <meta name="ke-border-width" content="0"/>
+    <meta name="orientation-lock" content="none"/>
+    <meta name="region-mag" content="${panelView ? "true" : "false"}"/>
+    <meta property="rendition:spread">landscape</meta>
+    <meta property="rendition:layout">pre-paginated</meta>
   </metadata>
   <manifest>${manifest.join("")}</manifest>
   <spine toc="ncx">${spine.join("")}</spine>
 </package>`;
 
-  const css = "body{margin:0;padding:0}h1{font:600 1.1em/1.3 sans-serif;margin:1em .8em}img{display:block;width:100%;height:auto;margin:0}";
-
+  const css =
+    "html,body{margin:0;padding:0;height:100%;background:#fff}img{display:block;width:100%;height:auto;margin:0}";
   zip.addBuffer(Buffer.from(opf), "OEBPS/content.opf");
   zip.addBuffer(Buffer.from(ncx), "OEBPS/toc.ncx");
   zip.addBuffer(Buffer.from(nav), "OEBPS/nav.xhtml");

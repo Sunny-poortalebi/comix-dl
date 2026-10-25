@@ -33,8 +33,16 @@
       <input id="group" value="Violet Scans" />
     </div>
     <div class="field narrow">
-      <label for="limit">Chapter limit <span class="hint">0 = all</span></label>
+      <label for="limit">Chapter limit <span class="hint">0 = all; after range</span></label>
       <input id="limit" type="number" min="0" value="0" />
+    </div>
+    <div class="field narrow">
+      <label for="from">Chapter from <span class="hint">blank = first</span></label>
+      <input id="from" type="number" min="0" step="0.1" placeholder="first" />
+    </div>
+    <div class="field narrow">
+      <label for="to">Chapter to <span class="hint">blank = last</span></label>
+      <input id="to" type="number" min="0" step="0.1" placeholder="last" />
     </div>
     <div class="field narrow">
       <label for="maxMb">EPUB cap (MB)</label>
