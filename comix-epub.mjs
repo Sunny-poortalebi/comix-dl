@@ -336,7 +336,11 @@ ${toc
 </package>`;
 
   const css = `@page { margin: 0; }
-body { display: block; margin: 0; padding: 0; }
+html, body { margin: 0; padding: 0; }
+/* inline images sit on a baseline and add a 4px line box below each page,
+   which shows up as a gap between panels in continuous scroll — zero it out */
+body { display: block; margin: 0; padding: 0; line-height: 0; }
+img { vertical-align: top; }
 #PV { position: absolute; width: 100%; height: 100%; top: 0; left: 0; }
 #PV-T { top: 0; width: 100%; height: 50%; }
 #PV-B { bottom: 0; width: 100%; height: 50%; }
