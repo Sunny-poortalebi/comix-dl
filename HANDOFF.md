@@ -3,7 +3,7 @@
 Date: 2026-10-26
 Repo: `Sunny-poortalebi/comix-dl`
 Branch: `main`
-Last code commit: `a83dc69` (`EPUB: match KCC page model (2/3 viewport, cover, PV layer, ltr spine)`)
+Last code commit: `0e78695` (`EPUB: remove inter-page baseline gap (line-height 0, vertical-align top)`)
 
 ## Current state
 
@@ -62,6 +62,10 @@ Relevant code: `comix-dl.mjs`, `app/main.cjs`, `app/preload.cjs`,
   - first page doubles as `cover.jpg`, with `<meta name="cover">` and a
     `cover-image` manifest entry.
   - `page-progression-direction="ltr"` on the spine.
+  - **seamless pages** (`0e78695`): `body { line-height: 0 }` +
+    `img { vertical-align: top }`. KCC's inline image otherwise adds a 4px
+    line-box below every page, visible as a gap between panels in continuous
+    scroll. The image keeps its inline centering.
 - Kindle metadata: `fixed-layout`, `book-type=comic`, device
   `original-resolution`, `region-mag`, zero gutter/margin, border metadata,
   `rendition:pre-paginated`.
@@ -107,6 +111,11 @@ Relevant code: `comix-epub.mjs`, `test/run.mjs`, `README.md`.
     Ch1-3 (comix-epub native v2).epub`.
   - **Validated on a physical Kindle by the user** (page fit and panel view
     acceptable).
+- Seamless-gap rebuild (`0e78695`):
+  - Same 409-page geometry as v2, but rendered body height is now exactly the
+    image height (1280px) instead of 1284px — the 4px baseline gap is gone.
+  - Artifact: `~/Downloads/comix-dl/kindle-kcc/TEST/The Age of Arrogance
+    Ch1-3 (comix-epub native v3).epub`.
 - App UI via Electron CDP:
   - Range fields render correctly.
   - **Start** with `from=2, to=2` logs the range and
@@ -119,6 +128,7 @@ Relevant code: `comix-epub.mjs`, `test/run.mjs`, `README.md`.
   - `73a1b90` Add chapter ranges and fixed-layout comic EPUBs
   - `5551a71` Report the ranged chapter count to the app
   - `a83dc69` EPUB: match KCC page model (2/3 viewport, cover, PV layer, ltr spine)
+  - `0e78695` EPUB: remove inter-page baseline gap (line-height 0, vertical-align top)
 
 ## Known limitations / risks
 
