@@ -208,7 +208,9 @@ function assertEpubStructure(epub, { chapterLabel, pageCount, chapterCount = 1 }
     `toc.ncx label does not contain ${chapterLabel}`,
   );
 
-  const images = entries.filter((e) => e.startsWith("OEBPS/Images/") && e.endsWith(".jpg"));
+  const images = entries.filter(
+    (e) => e.startsWith("OEBPS/Images/") && e.endsWith(".jpg") && !e.endsWith("/cover.jpg"),
+  );
   const pages = entries.filter((e) => e.startsWith("OEBPS/Text/") && e.endsWith(".xhtml"));
   assert.equal(images.length, pageCount, `expected ${pageCount} .jpg images, found ${images.length}`);
   assert.equal(pages.length, pageCount, `expected ${pageCount} XHTML pages, found ${pages.length}`);
