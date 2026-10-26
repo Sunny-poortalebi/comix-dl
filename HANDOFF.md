@@ -1,14 +1,16 @@
 # HANDOFF
 
-Date: 2026-10-25
+Date: 2026-10-26
 Repo: `Sunny-poortalebi/comix-dl`
 Branch: `main`
-Last code commit: `5551a71` (`Report the ranged chapter count to the app`)
+Last code commit: `a83dc69` (`EPUB: match KCC page model (2/3 viewport, cover, PV layer, ltr spine)`)
 
 ## Current state
 
 The app and CLI now support chapter ranges and build fixed-layout comic EPUBs
-using KCC-style page structure. The rebuilt macOS app is deployed at:
+using KCC's page model (2/3 viewport, cover, `#PV` layer, LTR spine). A
+Ch1–3 test build was validated on a physical Kindle. The rebuilt macOS app is
+deployed at:
 
 ```
 ~/Desktop/Manhwa/comix-dl.app
@@ -51,7 +53,15 @@ Relevant code: `comix-dl.mjs`, `app/main.cjs`, `app/preload.cjs`,
 `comix-epub.mjs` was replaced with a fixed-layout comic EPUB3 builder:
 
 - One JPEG and one XHTML page per source page.
-- Per-page viewport and explicit image dimensions, matching KCC's page model.
+- **KCC-compatible page geometry** (commit `a83dc69`):
+  - viewport is **2/3 of the image** (`800×1280 → 533×853`, floored), while the
+    `<img>` keeps its native pixel dimensions — this is what made Kindle scale
+    pages instead of clipping them.
+  - page wrapper (`text-align:center` + hidden dot) and empty `<div id="PV">`
+    plus KCC's `#PV*` CSS for Kindle's virtual panel view.
+  - first page doubles as `cover.jpg`, with `<meta name="cover">` and a
+    `cover-image` manifest entry.
+  - `page-progression-direction="ltr"` on the spine.
 - Kindle metadata: `fixed-layout`, `book-type=comic`, device
   `original-resolution`, `region-mag`, zero gutter/margin, border metadata,
   `rendition:pre-paginated`.
@@ -76,16 +86,27 @@ Relevant code: `comix-epub.mjs`, `test/run.mjs`, `README.md`.
 
 ## Verification performed
 
-- `npm test`: 8/8 pass (structure, budget, range, inverted range, CLI errors).
+- `npm test`: 8/8 pass (structure, budget, range, inverted range, CLI errors;
+  the cover is excluded from the page-count assertions).
 - Real cached range selection:
   - `--from 2 --to 2` on The Age of Arrogance.
   - Log: `93 chapters (Ch2-Ch2) · 1 already done`; exit 0.
-- Real range EPUB build:
+- Real range EPUB build (pre-`a83dc69`):
   - Ch1 only, 145 pages, 11.3 MB.
-  - 145 JPEGs + 145 XHTML pages.
-  - `viewport width=800 height=1280`; OPF has fixed-layout/book-type=comic.
   - `unzip -t` clean; OPF, NCX, nav and a page passed `xmllint`.
   - Test artifact was removed afterward.
+- KCC page-model rebuild (`a83dc69`) on The Age of Arrogance Ch1–3:
+  - 409 pages (145+124+140), 29.5 MB, 409 JPEGs + 409 XHTML pages + cover.
+  - Page viewport `533×853`, img `800×1280`, `#PV` layer and KCC CSS,
+    spine `page-progression-direction="ltr"`, `region-mag=true`.
+  - `unzip -t` clean; 0 `app-amzn-magnify` overlays (the validated KCC file
+    also has none).
+  - Page fidelity vs source WebPs: sampled MAE 1.83 / 1.18 / 2.27 / 2.01 /
+    2.65 / 2.25 / 2.02 / 1.86 / 2.88 / 0.45 out of 255 — content-complete.
+  - Artifact: `~/Downloads/comix-dl/kindle-kcc/TEST/The Age of Arrogance
+    Ch1-3 (comix-epub native v2).epub`.
+  - **Validated on a physical Kindle by the user** (page fit and panel view
+    acceptable).
 - App UI via Electron CDP:
   - Range fields render correctly.
   - **Start** with `from=2, to=2` logs the range and
@@ -97,20 +118,25 @@ Relevant code: `comix-epub.mjs`, `test/run.mjs`, `README.md`.
 - Commits pushed:
   - `73a1b90` Add chapter ranges and fixed-layout comic EPUBs
   - `5551a71` Report the ranged chapter count to the app
+  - `a83dc69` EPUB: match KCC page model (2/3 viewport, cover, PV layer, ltr spine)
 
 ## Known limitations / risks
 
-- **Not tested on a physical Kindle.** Validation so far is structural: EPUB
-  layout, metadata, XML and archive integrity. The next real test is Send to
-  Kindle and checking page fit and panel view.
-- **No KCC magnify overlays.** The EPUB sets `region-mag=true`, but unlike KCC
-  it does not emit per-page `app-amzn-magnify` quadrant overlays. If Kindle
-  panel view does not work, add those overlays next.
+- **Kindle validation is limited to Ch1–3 of one title.** Longer ranges and
+  other Kindle models are untested; structural checks pass but page fit should
+  be spot-checked on larger builds.
+- **No KCC magnify overlays.** The EPUB sets `region-mag=true` and the `#PV`
+  layer; the validated KCC 12.1.1 file also has zero `app-amzn-magnify`
+  overlays. Add quadrant overlays only if the built-in virtual panel view is
+  not good enough.
+- **No automatic white-margin cropping.** KCC crops page margins (its images
+  are smaller than the source); this builder keeps the full page, so artwork
+  can appear smaller. Add an optional crop step if margins matter.
 - **Existing full-series EPUB was not regenerated.** The old
   `~/Downloads/comix-dl/The Age of Arrogance.epub` is still the previous
   reflowable WebP build (246 MB). Build a new range from the app or CLI before
   sending it to Kindle.
-- **Full 300 MB build not exercised end-to-end.** A 145-page chapter was
+- **Full 300 MB build not exercised end-to-end.** A 409-page range was
   verified. Large ranges (for example 12,000 pages) should be tested for memory
   use, runtime, and cap accuracy.
 - **App does not expose color/panel-view options.** These are CLI flags only.
@@ -122,23 +148,19 @@ Relevant code: `comix-epub.mjs`, `test/run.mjs`, `README.md`.
 
 ## Planned next steps
 
-1. Send a small new range EPUB (Ch1 only or Ch1-10) to Kindle and verify:
-   - it opens as a comic/fixed-layout book;
-   - pages fit without clipping;
-   - panel view / double-tap behavior;
-   - file size and conversion time.
-2. If panel view is missing, implement KCC-style `app-amzn-magnify` overlays
-   for four quadrants per page and retest on Kindle.
-3. Build the user's desired volumes with the new builder, for example
-   Ch1-35, Ch36-70, etc., instead of one 300 MB book. Do not overwrite the old
-   full EPUB until the new one is verified.
-4. Stress-test one large range (roughly 300 MB) for runtime and memory.
-5. Optional polish:
+1. Build the user's desired volumes with the validated page model, for example
+   Ch1-35, Ch36-70, etc., instead of one 300 MB book. The Ch1–3 v2 artifact is
+   the reference; do not overwrite the old full EPUB until a large build is
+   checked.
+2. Stress-test one large range (roughly 300 MB) for runtime and memory.
+3. Optional polish:
    - expose `--color` and `--no-panel-view` in the app;
    - validate `from > to` in the app before spawning the CLI;
    - fix `1 chapters` pluralization;
    - bump the release version and rebuild platform artifacts.
-6. Rerun the earlier *Cheese in the Trap* retry separately.
+4. Optional: add KCC-style white-margin cropping and/or `app-amzn-magnify`
+   quadrant overlays if device testing shows a need.
+5. Rerun the earlier *Cheese in the Trap* retry separately.
 
 ## Useful commands
 
