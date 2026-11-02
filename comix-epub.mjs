@@ -130,10 +130,11 @@ async function scanChapters(dir) {
 }
 
 function jpegPipeline(file, targetWidth) {
-  let s = sharp(file, { failOn: "none" }).rotate().resize({
-    width: targetWidth,
-    withoutEnlargement: true,
-  });
+  let s = sharp(file, { failOn: "none" })
+    .rotate()
+    // trim white/dark borders conservatively: threshold 12 keeps full-bleed art
+    .trim({ threshold: 12 })
+    .resize({ width: targetWidth, withoutEnlargement: true });
   if (!color) s = s.grayscale();
   return s;
 }
@@ -192,21 +193,16 @@ async function encodeAll(chapters, target, pass) {
   return { encoded, bytes };
 }
 
-// KCC's proven page model: the viewport is 2/3 of the image, so Kindle scales
-// the page instead of rendering it at 1:1 and clipping the bottom. The image
-// keeps its full pixel dimensions (KCC does the same), and #PV is the anchor
-// Kindle's virtual panel view overlays.
-const VIEWPORT_SCALE = 2 / 3;
-
+// Shima model (validated): the viewport is exactly the image size and the image
+// is a block, so the reader displays the whole page instead of clipping it to a
+// fractional viewport. Kindle still scales the page to fit the screen.
 function xhtml(page, imageName, w, h) {
-  const vw = Math.floor(w * VIEWPORT_SCALE);
-  const vh = Math.floor(h * VIEWPORT_SCALE);
   return `<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" xml:lang="en">
 <head><meta charset="utf-8"/><title>Page ${page}</title><link rel="stylesheet" href="../style.css"/>
-<meta name="viewport" content="width=${vw}, height=${vh}"/></head>
-<body><div style="text-align:center;"><div style="display:none;">.</div><img width="${w}" height="${h}" src="../Images/${imageName}" alt="Page ${page}"/></div><div id="PV"></div></body>
+<meta name="viewport" content="width=${w}, height=${h}"/></head>
+<body><img width="${w}" height="${h}" src="../Images/${imageName}" alt="Page ${page}"/></body>
 </html>`;
 }
 
@@ -335,22 +331,8 @@ ${toc
   <spine toc="ncx" page-progression-direction="ltr">${spine.join("")}</spine>
 </package>`;
 
-  const css = `@page { margin: 0; }
-html, body { margin: 0; padding: 0; }
-/* inline images sit on a baseline and add a 4px line box below each page,
-   which shows up as a gap between panels in continuous scroll — zero it out */
-body { display: block; margin: 0; padding: 0; line-height: 0; }
-img { vertical-align: top; }
-#PV { position: absolute; width: 100%; height: 100%; top: 0; left: 0; }
-#PV-T { top: 0; width: 100%; height: 50%; }
-#PV-B { bottom: 0; width: 100%; height: 50%; }
-#PV-L { left: 0; width: 49.5%; height: 100%; float: left; }
-#PV-R { right: 0; width: 49.5%; height: 100%; float: right; }
-#PV-TL { top: 0; left: 0; width: 49.5%; height: 50%; float: left; }
-#PV-TR { top: 0; right: 0; width: 49.5%; height: 50%; float: right; }
-#PV-BL { bottom: 0; left: 0; width: 49.5%; height: 50%; float: left; }
-#PV-BR { bottom: 0; right: 0; width: 49.5%; height: 50%; float: right; }
-.PV-P { width: 100%; height: 100%; top: 0; position: absolute; display: none; }`;
+  const css =
+    "html,body{margin:0;padding:0;height:100%;background:#fff}img{display:block;width:100%;height:auto;margin:0}";
   zip.addBuffer(Buffer.from(opf), "OEBPS/content.opf");
   zip.addBuffer(Buffer.from(ncx), "OEBPS/toc.ncx");
   zip.addBuffer(Buffer.from(nav), "OEBPS/nav.xhtml");
