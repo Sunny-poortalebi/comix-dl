@@ -3,14 +3,15 @@
 Date: 2026-10-26
 Repo: `Sunny-poortalebi/comix-dl`
 Branch: `main`
-Last code commit: `0e78695` (`EPUB: remove inter-page baseline gap (line-height 0, vertical-align top)`)
+Last code commit: `1513de9` (`EPUB: restore Shima page model and trim page margins`)
 
 ## Current state
 
 The app and CLI now support chapter ranges and build fixed-layout comic EPUBs
-using KCC's page model (2/3 viewport, cover, `#PV` layer, LTR spine). A
-Ch1–3 test build was validated on a physical Kindle. The rebuilt macOS app is
-deployed at:
+using the validated **Shima page model** (viewport = image size, block image)
+with conservative page-border trimming. The 2/3-viewport KCC experiment was
+reverted: it fit The Age of Arrogance but clipped pages on Our House Love
+Trouble. The rebuilt macOS app is deployed at:
 
 ```
 ~/Desktop/Manhwa/comix-dl.app
@@ -53,19 +54,19 @@ Relevant code: `comix-dl.mjs`, `app/main.cjs`, `app/preload.cjs`,
 `comix-epub.mjs` was replaced with a fixed-layout comic EPUB3 builder:
 
 - One JPEG and one XHTML page per source page.
-- **KCC-compatible page geometry** (commit `a83dc69`):
-  - viewport is **2/3 of the image** (`800×1280 → 533×853`, floored), while the
-    `<img>` keeps its native pixel dimensions — this is what made Kindle scale
-    pages instead of clipping them.
-  - page wrapper (`text-align:center` + hidden dot) and empty `<div id="PV">`
-    plus KCC's `#PV*` CSS for Kindle's virtual panel view.
-  - first page doubles as `cover.jpg`, with `<meta name="cover">` and a
-    `cover-image` manifest entry.
+- **Shima page model** (`1513de9`, validated reference `Shima.epub`):
+  - viewport equals the encoded image size (no fractional scaling), and the
+    image is `display:block; width:100%; height:auto; margin:0`.
+  - no `#PV` layer, no KCC wrapper; this is the model that displayed whole
+    pages on the user's Kindle.
+  - first page doubles as `cover.jpg` with `<meta name="cover">` and a
+    `cover-image` manifest entry (cover is not in the spine).
   - `page-progression-direction="ltr"` on the spine.
-  - **seamless pages** (`0e78695`): `body { line-height: 0 }` +
-    `img { vertical-align: top }`. KCC's inline image otherwise adds a 4px
-    line-box below every page, visible as a gap between panels in continuous
-    scroll. The image keeps its inline centering.
+  - **conservative border trim**: `.trim({ threshold: 12 })` before resizing to
+    800 px, removing white/dark page margins so panels fill more of the screen.
+  - Superseded: the 2/3-viewport KCC model (`a83dc69` + `0e78695`) was reverted
+    after it cut pages on Our House Love Trouble (mixed 720×700 / 720×500
+    pages).
 - Kindle metadata: `fixed-layout`, `book-type=comic`, device
   `original-resolution`, `region-mag`, zero gutter/margin, border metadata,
   `rendition:pre-paginated`.
@@ -116,6 +117,14 @@ Relevant code: `comix-epub.mjs`, `test/run.mjs`, `README.md`.
     image height (1280px) instead of 1284px — the 4px baseline gap is gone.
   - Artifact: `~/Downloads/comix-dl/kindle-kcc/TEST/The Age of Arrogance
     Ch1-3 (comix-epub native v3).epub`.
+- Shima-model rebuild (`1513de9`) of Our House Love Trouble (the broken
+  latest export):
+  - 923 pages, 48.5 MB, viewport equals the image on every page
+    (example: 800×1138; trimmed 720×700 → 720×618).
+  - Block image + Shima CSS; 0 fractional-viewport pages.
+  - Old broken artefact kept at
+    `~/Downloads/comix-dl/Our House Love Trouble (broken 2-3 viewport).epub`.
+  - Kindle validation of this rebuild is pending.
 - App UI via Electron CDP:
   - Range fields render correctly.
   - **Start** with `from=2, to=2` logs the range and
@@ -129,6 +138,7 @@ Relevant code: `comix-epub.mjs`, `test/run.mjs`, `README.md`.
   - `5551a71` Report the ranged chapter count to the app
   - `a83dc69` EPUB: match KCC page model (2/3 viewport, cover, PV layer, ltr spine)
   - `0e78695` EPUB: remove inter-page baseline gap (line-height 0, vertical-align top)
+  - `1513de9` EPUB: restore Shima page model and trim page margins
 
 ## Known limitations / risks
 
@@ -139,9 +149,9 @@ Relevant code: `comix-epub.mjs`, `test/run.mjs`, `README.md`.
   layer; the validated KCC 12.1.1 file also has zero `app-amzn-magnify`
   overlays. Add quadrant overlays only if the built-in virtual panel view is
   not good enough.
-- **No automatic white-margin cropping.** KCC crops page margins (its images
-  are smaller than the source); this builder keeps the full page, so artwork
-  can appear smaller. Add an optional crop step if margins matter.
+- **Conservative trim only.** Border trimming uses threshold 12; full-bleed
+  edges (covers, dark art) are kept, but a page whose intentional border
+  matches the background could shrink slightly. Spot-check art-heavy titles.
 - **Existing full-series EPUB was not regenerated.** The old
   `~/Downloads/comix-dl/The Age of Arrogance.epub` is still the previous
   reflowable WebP build (246 MB). Build a new range from the app or CLI before
